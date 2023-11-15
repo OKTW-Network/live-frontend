@@ -167,20 +167,21 @@ if (currentPath.value?.startsWith('#record')) {
             :list="recordList.concat(livestreamList.filter((i) => i.isLive))"
           />
         </div>
-        <div ref="playlistRef" class="cell" :class="{ 'is-scrollable is-fluid': isMobile }">
+        <!-- playlistRef -->
+        <div ref="playlistRef" class="cell" :class="{ 'has-full-width is-scrollable': isMobile }">
           <!-- Chat for mobile user -->
-          <div v-if="isPlayable" class="desktop+:has-hidden has-full-height">
-            <ChatView
-              v-if="isMobile"
-              :viewer-count="viewerCount"
-              :messages="messages"
-              :uuid="uuid"
-              :nickname="nickname"
-              :ready="readyState"
-              @set-nickname="setNickname"
-              @send-message="sendMessage"
-            />
-          </div>
+          <ChatView
+            v-if="isMobile && isPlayable"
+            style="height: 60vh"
+            :viewer-count="viewerCount"
+            :messages="messages"
+            :uuid="uuid"
+            :nickname="nickname"
+            :ready="readyState"
+            @set-nickname="setNickname"
+            @send-message="sendMessage"
+          />
+          <div class="ts-divider"></div>
           <!-- Playlist -->
           <PlaylistView
             :current-path="currentPath"
@@ -191,18 +192,17 @@ if (currentPath.value?.startsWith('#record')) {
       </div>
     </div>
     <!-- Chat for desktop user -->
-    <div v-if="isPlayable" id="chatBar" class="tablet-:has-hidden cell">
-      <ChatView
-        v-if="!isMobile"
-        :viewer-count="viewerCount"
-        :messages="messages"
-        :uuid="uuid"
-        :nickname="nickname"
-        :ready="readyState"
-        @set-nickname="setNickname"
-        @send-message="sendMessage"
-      />
-    </div>
+    <ChatView
+      v-if="!isMobile && isPlayable"
+      id="chatBar"
+      :viewer-count="viewerCount"
+      :messages="messages"
+      :uuid="uuid"
+      :nickname="nickname"
+      :ready="readyState"
+      @set-nickname="setNickname"
+      @send-message="sendMessage"
+    />
   </div>
 </template>
 
