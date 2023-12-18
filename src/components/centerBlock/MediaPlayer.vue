@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import LivePlayer from './LivePlayer.vue'
-import PlayerInfoBar from './PlayerInfoBar.vue'
+import OverlayPlayer from './OverlayPlayer.vue'
 
 const props = defineProps({
   currentPath: String,
@@ -15,21 +15,5 @@ const resource = computed(
 
 <template>
   <LivePlayer v-if="resource?.isLive" :resource="resource" />
-  <div v-else class="ts-app-layout is-vertical">
-    <!-- Player -->
-    <div class="cell is-fluid" style="display: inline-flex">
-      <video controls class="has-full-size" :src="resource?.src" />
-    </div>
-    <!-- Dropdown -->
-    <PlayerInfoBar :resource="resource" />
-  </div>
+  <OverlayPlayer v-else :resource="resource" />
 </template>
-
-<style scoped>
-:global(video) {
-  aspect-ratio: 16/9;
-  max-height: 80vh;
-  display: inline-flex;
-  box-sizing: content-box;
-}
-</style>

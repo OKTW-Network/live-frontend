@@ -1747,6 +1747,7 @@ __metadata:
     "@vue/eslint-config-prettier": "npm:^8.0.0"
     eslint: "npm:^8.49.0"
     eslint-plugin-vue: "npm:^9.17.0"
+    lodash: "npm:^4.17.21"
     prettier: "npm:^3.0.3"
     vite: "npm:^4.4.11"
     vue: "npm:^3.3.4"
