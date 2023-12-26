@@ -44,13 +44,9 @@ defineEmits([
       :value="volume"
       :max="150"
       step="any"
-      list="volumeMarkers"
       @input="$emit('update:volume', $event.target.value)"
       @wheel="$emit('volume-mousewheel', $event)"
     />
-    <datalist id="volumeMarkers">
-      <option value="100"></option>
-    </datalist>
     <span
       class="mobile:has-hidden has-cursor-pointer"
       title="按一下重置音量"
