@@ -1,9 +1,14 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { debounce } from 'lodash'
 
+import WatchTogetherStatus from './OverlayPlayer/Sharing/WatchTogetherStatus.vue'
+import WatchTogetherConfig from './OverlayPlayer/Sharing/WatchTogetherConfig.vue'
 import VolumeControl from './OverlayPlayer/VolumeControl.vue'
 import ErrorBlankSlate from '../ErrorBlankSlate.vue'
+
+import { useRoute } from '../../util/routing'
+import { useWatchTogether } from '../../util/websocket'
 
 const props = defineProps({
   resource: {
@@ -24,6 +29,39 @@ const props = defineProps({
   }
 })
 defineEmits(['change-quality'])
+
+// Handle route
+const { getParameter, setParameter, getUrlWithoutParameters, route } = useRoute()
+
+const restoreTimeFromUrl = () => {
+  const time = getParameter('t')
+  if (time && !isNaN(time) && parseInt(time) > 0 && parseInt(time) < duration.value) {
+    currentTime.value = parseInt(time)
+    setTime()
+  }
+}
+
+// Handle watch together
+const {
+  syncedTime,
+  nickname,
+  isHost,
+  hostName,
+  locked,
+  viewerCount,
+  readyState,
+  setNickname,
+  syncTime,
+  setLocked,
+  connect,
+  disconnect
+} = useWatchTogether()
+
+const isWatchTogetherActive = computed(() => getParameter('wt') !== undefined && readyState.value)
+const isWatchTogetherConfigOpen = ref(false)
+const isPlayControlLocked = computed(
+  () => isWatchTogetherActive.value && !isHost.value && locked.value
+)
 
 // Handle touch mode
 const touchMode = ref(false)
@@ -69,6 +107,7 @@ const updatePlayerStatus = () => {
 
 const handlePlayerLoaded = () => {
   updatePlayerStatus()
+  restoreTimeFromUrl()
   showUIAndResetAutoHideTimer()
 }
 
@@ -83,33 +122,39 @@ const playbackRateList = ref([
 ])
 
 const setPlaybackRate = (rate) => {
+  if (isPlayControlLocked.value) return
   videoRef.value.playbackRate = rate
   updatePlayerStatus()
 }
 
 const debounceSeekDrag = () => {
+  if (isPlayControlLocked.value) return
   draggingCurrentTime.value = currentTime.value
   debounce(setTime, 500)()
 }
 
 const setTime = () => {
+  if (isPlayControlLocked.value) return
   draggingCurrentTime.value = undefined
   videoRef.value.currentTime = currentTime.value
   updatePlayerStatus()
 }
 
 const seekForward = () => {
+  if (isPlayControlLocked.value) return
   currentTime.value = Math.min(currentTime.value + 5, duration.value)
   setTime()
 }
 
 const seekBackward = () => {
+  if (isPlayControlLocked.value) return
   currentTime.value = Math.max(currentTime.value - 5, 0)
   setTime()
 }
 
 const togglePlay = () => {
   if (!props.resource) return
+  if (isPlayControlLocked.value) return
   if (videoRef.value.paused) {
     videoRef.value.play()
   } else {
@@ -205,9 +250,11 @@ const toggleMute = () => {
 // Handle dropdown
 const rateDropdownRef = ref(null)
 const qualityDropdownRef = ref(null)
+const shareDropdown = ref(null)
 const isDropdownVisible = () =>
   rateDropdownRef.value?.classList.contains('is-visible') ||
-  qualityDropdownRef.value?.classList.contains('is-visible')
+  qualityDropdownRef.value?.classList.contains('is-visible') ||
+  shareDropdown.value?.classList.contains('is-visible')
 
 // Handle show / (auto) hide UI
 const autoHideTimer = ref(null)
@@ -427,6 +474,29 @@ const handleVolumeMouseWheel = (event) => {
   }
 }
 
+// Handle Share Menu
+const copyVideoUrl = () => {
+  const newUrl = getUrlWithoutParameters()
+  navigator.clipboard.writeText(newUrl.href)
+}
+
+const copyTimeUrl = () => {
+  const newUrl = setParameter({ t: Math.floor(currentTime.value) })
+  navigator.clipboard.writeText(newUrl.href)
+}
+
+const copyWatchTogetherUrl = () => {
+  const newUrl = setParameter({ t: undefined })
+  navigator.clipboard.writeText(newUrl.href)
+}
+
+watch(
+  () => route.value,
+  () => {
+    restoreTimeFromUrl()
+  }
+)
+
 onMounted(() => {
   document.addEventListener('keydown', handleKeyDown)
 })
@@ -485,16 +555,59 @@ onUnmounted(() => {
       @pointerup="handlePlayerPointerEvent"
     >
       <div class="ts-content" style="color: #fff">
-        <div class="ts-header is-truncated">{{ resource.streamer }}</div>
-        <span v-if="resource.isLive">
-          <span class="ts-icon is-circle-icon" :style="{ color: '#ff4141' }" />
-          Live
-        </span>
-        <span v-else>
-          {{
-            `${resource.publishTime.toLocaleDateString()} ${resource.publishTime.toLocaleTimeString()}`
-          }}
-        </span>
+        <div class="is-flex justify-between has-horizontally-padded">
+          <div id="videoTitle">
+            <div class="ts-header is-truncated">{{ resource.streamer }}</div>
+            <span v-if="resource.isLive">
+              <span class="ts-icon is-circle-icon" :style="{ color: '#ff4141' }" />
+              Live
+            </span>
+            <span v-else>
+              {{
+                `${resource.publishTime.toLocaleDateString()} ${resource.publishTime.toLocaleTimeString()}`
+              }}
+            </span>
+          </div>
+          <div class="is-flex">
+            <WatchTogetherStatus
+              v-if="isWatchTogetherActive"
+              :is-host="isHost"
+              :host-name="hostName"
+              :viewer-count="viewerCount"
+            />
+            <div>
+              <button
+                class="button has-flex-center"
+                data-dropdown="share"
+                @pointerup="onPlayerPointerMove"
+              >
+                <span class="ts-icon is-share-nodes-icon" />
+              </button>
+              <div
+                ref="shareDropdown"
+                class="ts-dropdown style-text"
+                data-name="share"
+                data-position="bottom-end"
+              >
+                <button class="item" @click="copyVideoUrl">複製影片連結</button>
+                <button v-if="!resource.isLive" class="item" @click="copyTimeUrl">
+                  複製目前時間的連結
+                  <span class="description">{{ timeToText(currentTime) }}</span>
+                </button>
+                <button
+                  v-if="!resource.isLive"
+                  class="item"
+                  @click="isWatchTogetherConfigOpen = true"
+                >
+                  {{ isWatchTogetherActive ? '管理' : '啟動' }}同時觀看
+                </button>
+                <button v-if="isWatchTogetherActive" class="item" @click="copyWatchTogetherUrl">
+                  複製同時觀看連結
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div
@@ -510,6 +623,7 @@ onUnmounted(() => {
           v-model="currentTime"
           :max="duration"
           step="any"
+          :disabled="isPlayControlLocked"
           @input="debounceSeekDrag"
         />
         <div class="is-flex justify-between" :class="{ 'has-horizontally-padded': !touchMode }">
@@ -601,8 +715,12 @@ onUnmounted(() => {
                   v-for="rateItem in playbackRateList"
                   :key="rateItem.value"
                   class="item"
-                  :class="{ 'is-selected': rateItem.value === playbackRate }"
+                  :class="{ 
+                    'is-selected': rateItem.value === playbackRate,
+                    'is-disabled': isPlayControlLocked
+                  }"
                   @click="setPlaybackRate(rateItem.value)"
+                  :disabled="isPlayControlLocked"
                 >
                   {{ rateItem.text }}
                 </button>
@@ -629,6 +747,18 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+  <WatchTogetherConfig
+    :model-open="isWatchTogetherConfigOpen"
+    :is-active="isWatchTogetherActive"
+    :is-host="isHost"
+    :host-name="hostName"
+    :viewer-count="viewerCount"
+    :nickname="nickname"
+    :is-locked="locked"
+    @nickname-change="setNickname"
+    @close="isWatchTogetherConfigOpen = false"
+    @lock-change="setLocked"
+  />
 </template>
 
 <style scoped>
@@ -653,6 +783,10 @@ onUnmounted(() => {
 .auto-hidden,
 .auto-hidden * {
   cursor: none;
+}
+
+#videoTitle {
+  max-width: 65%;
 }
 
 /* Workaround tocas-ui's important */

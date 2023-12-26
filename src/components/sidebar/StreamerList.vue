@@ -1,6 +1,6 @@
 <script setup>
 defineProps({
-  path: String,
+  selectedStreamer: String,
   livestreamList: Array
 })
 </script>
@@ -15,8 +15,8 @@ defineProps({
     <a
       class="item"
       v-for:="i in livestreamList"
-      :href="`#profile/${i.streamer}`"
-      :class="{ 'is-active': path.split('/').at(1) === i.streamer }"
+      :href="`#${i.streamer}`"
+      :class="{ 'is-active': selectedStreamer === i.streamer }"
     >
       <span v-if="i.isLive" class="ts-icon is-video-icon is-negative"></span>
       <span v-else class="ts-icon is-video-icon"></span>
