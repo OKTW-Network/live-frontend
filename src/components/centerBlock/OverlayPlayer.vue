@@ -416,6 +416,8 @@ const handleKeyDown = (event) => {
 
 const handleVolumeMouseWheel = (event) => {
   event.preventDefault()
+  handlePlayerPointerEvent(event)
+
   if (event.deltaY > 0) {
     // Scroll down
     volumeDown()
@@ -527,7 +529,7 @@ onUnmounted(() => {
               :convert-volume="convertVolume"
               @reset-button-pointerup="withHandlePointerEvent($event, resetVolume)"
               @mute-button-pointerup="withHandlePointerEvent($event, toggleMute)"
-              @volume-mousewheel="withHandlePointerEvent($event, handleVolumeMouseWheel)"
+              @volume-mousewheel="handleVolumeMouseWheel"
               @pointerup="handlePlayerPointerEvent"
               @update:volume="setVolume"
             />
@@ -544,7 +546,7 @@ onUnmounted(() => {
               :convert-volume="convertVolume"
               @reset-button-pointerup="withHandlePointerEvent($event, resetVolume)"
               @mute-button-pointerup="withHandlePointerEvent($event, toggleMute)"
-              @volume-mousewheel="withHandlePointerEvent($event, handleVolumeMouseWheel)"
+              @volume-mousewheel="handleVolumeMouseWheel"
               @pointerup="handlePlayerPointerEvent"
               @update:volume="setVolume"
             />
