@@ -55,7 +55,6 @@ const initHls = () => {
     hls.value.loadSource(props.resource?.src)
     hls.value.attachMedia(player.value)
     hls.value.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
-      const play = player.value.play()
       qualityList.value = data.levels.map((i) =>
         i.height ? `${i.height}p (${i.bitrate / 1000}kbps)` : 'Source'
       )
@@ -64,14 +63,6 @@ const initHls = () => {
       change_quality(
         stored_quality !== null && !isNaN(parseInt(stored_quality)) ? parseInt(stored_quality) : -1
       )
-
-      if (play)
-        play.catch((error) => {
-          if (error.name === 'NotAllowedError') {
-            player.value.muted = true
-            player.value.play()
-          }
-        })
     })
 
     // Workaround firefox codec test fail
