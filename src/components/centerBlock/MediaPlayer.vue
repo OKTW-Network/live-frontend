@@ -4,16 +4,26 @@ import LivePlayer from './LivePlayer.vue'
 import OverlayPlayer from './OverlayPlayer.vue'
 
 const props = defineProps({
-  currentPath: String,
-  list: Array
+  filename: String,
+  list: Array,
+  time: {
+    type: String,
+    required: false,
+    default: undefined
+  }
 })
+defineEmits(['copy-link', 'copy-time-link'])
 
-const resource = computed(
-  () => props.list?.filter((i) => i.name == props.currentPath?.split('/').at(-1))[0]
-)
+const resource = computed(() => props.list?.filter((i) => i.name === props.filename)[0])
 </script>
 
 <template>
-  <LivePlayer v-if="resource?.isLive" :resource="resource" />
-  <OverlayPlayer v-else :resource="resource" />
+  <LivePlayer v-if="resource?.isLive" :resource="resource" @copy-link="$emit('copy-link')" />
+  <OverlayPlayer
+    v-else
+    :resource="resource"
+    :time="time"
+    @copy-link="$emit('copy-link')"
+    @copy-time-link="$emit('copy-time-link', $event)"
+  />
 </template>

@@ -36,6 +36,10 @@ coverage
 !.yarn/sdks
 !.yarn/versions
 
+# env
+.env*
+!.env.example
+
 # Custom ignored
 record
 live

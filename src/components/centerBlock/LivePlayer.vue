@@ -5,6 +5,7 @@ import OverlayPlayer from './OverlayPlayer.vue'
 const props = defineProps({
   resource: Object
 })
+defineEmits(['copy-link'])
 
 const hls = ref(null)
 const player = ref(null)
@@ -121,5 +122,6 @@ onBeforeUnmount(() => {
     :current-quality="currentQuality"
     :is-error="isError"
     @change-quality="change_quality"
+    @copy-link="$emit('copy-link')"
   />
 </template>

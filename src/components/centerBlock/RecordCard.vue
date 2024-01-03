@@ -12,7 +12,7 @@ const props = defineProps({
 const pubTime = computed(
   () => `${props.publishTime.toLocaleDateString()} ${props.publishTime.toLocaleTimeString()}`
 )
-const parsedu = computed(() => {
+const parseDuration = computed(() => {
   let h = Math.floor(props.duration / 3600)
   let m = Math.floor((props.duration % 3600) / 60)
   let s = Math.floor(props.duration % 60)
@@ -21,14 +21,18 @@ const parsedu = computed(() => {
   if (s < 10) s = `0${s}`
   return `${h}:${m}:${s}`
 })
-const isload = ref(false)
+const nameWithoutExt = computed(() => {
+  if (props.isLive) return 'live'
+  return props.name.substring(0, props.name.lastIndexOf('.')) || props.name
+})
+const isLoaded = ref(false)
 </script>
 
 <template>
   <!-- Box -->
-  <a class="ts-box" :href="`#profile/${streamer}/${name}`">
+  <a class="ts-box" :href="`#${streamer}/${nameWithoutExt}`">
     <!-- Preview image -->
-    <div class="live-card-picture ts-image" :class="{ 'live-loading': !isload }">
+    <div class="live-card-picture ts-image" :class="{ 'live-loading': !isLoaded }">
       <picture>
         <source v-if="isLive" type="image/jxl" :srcset="`${src.substring(0, src.length - 4)}jxl`" />
         <source v-else type="image/jxl" :srcset="`${src.substring(0, src.length - 3)}jxl`" />
@@ -41,7 +45,7 @@ const isload = ref(false)
         <source v-if="isLive" type="image/png" :srcset="`${src.substring(0, src.length - 4)}png`" />
         <source v-else type="image/png" :srcset="`${src.substring(0, src.length - 3)}png`" />
         <img
-          @load="isload++"
+          @load="isLoaded++"
           src="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 90' xmlns:v='https://vecta.io/nano'%3e%3cpath d='M0 0h160v90H0z' fill='%23232323'/%3e%3cg fill='%23676767'%3e%3ccircle cx='60' cy='45' r='6'/%3e%3ccircle cx='80' cy='45' r='6'/%3e%3ccircle cx='100' cy='45' r='6'/%3e%3c/g%3e%3c/svg%3e"
           alt="Record thumb"
           loading="lazy"
@@ -53,7 +57,7 @@ const isload = ref(false)
     <div class="ts-content is-secondary has-full-height">
       <div class="ts-text is-description is-truncated">{{ streamer }}</div>
       <div v-if="isLive" class="ts-header is-truncated is-heavy" style="color: #ff4141">Live</div>
-      <div v-else class="ts-header is-truncated is-heavy">{{ parsedu }}</div>
+      <div v-else class="ts-header is-truncated is-heavy">{{ parseDuration }}</div>
       <div v-if="!isLive" class="ts-text is-description">{{ pubTime }}</div>
       <div v-else class="ts-text is-description">Now</div>
     </div>

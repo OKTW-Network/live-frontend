@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { debounce } from 'lodash'
 
 import VolumeControl from './OverlayPlayer/VolumeControl.vue'
@@ -18,12 +18,25 @@ const props = defineProps({
     type: Number,
     default: -1
   },
+  time: {
+    type: String,
+    required: false,
+    default: undefined
+  },
   isError: {
     type: Boolean,
     default: false
   }
 })
-defineEmits(['change-quality'])
+defineEmits(['change-quality', 'copy-link', 'copy-time-link'])
+
+// Handle time code
+const restoreTime = () => {
+  if (props.time && !isNaN(props.time)) {
+    currentTime.value = Math.max(Math.min(parseInt(props.time), duration.value), 0)
+    setTime()
+  }
+}
 
 // Handle touch mode
 const touchMode = ref(false)
@@ -69,6 +82,7 @@ const updatePlayerStatus = () => {
 
 const handlePlayerLoaded = () => {
   updatePlayerStatus()
+  restoreTime()
   showUIAndResetAutoHideTimer()
 }
 
@@ -205,9 +219,11 @@ const toggleMute = () => {
 // Handle dropdown
 const rateDropdownRef = ref(null)
 const qualityDropdownRef = ref(null)
+const shareDropdown = ref(null)
 const isDropdownVisible = () =>
   rateDropdownRef.value?.classList.contains('is-visible') ||
-  qualityDropdownRef.value?.classList.contains('is-visible')
+  qualityDropdownRef.value?.classList.contains('is-visible') ||
+  shareDropdown.value?.classList.contains('is-visible')
 
 // Handle show / (auto) hide UI
 const autoHideTimer = ref(null)
@@ -427,6 +443,13 @@ const handleVolumeMouseWheel = (event) => {
   }
 }
 
+watch(
+  () => props.time,
+  () => {
+    restoreTime()
+  }
+)
+
 onMounted(() => {
   document.addEventListener('keydown', handleKeyDown)
 })
@@ -485,16 +508,47 @@ onUnmounted(() => {
       @pointerup="handlePlayerPointerEvent"
     >
       <div class="ts-content" style="color: #fff">
-        <div class="ts-header is-truncated">{{ resource.streamer }}</div>
-        <span v-if="resource.isLive">
-          <span class="ts-icon is-circle-icon" :style="{ color: '#ff4141' }" />
-          Live
-        </span>
-        <span v-else>
-          {{
-            `${resource.publishTime.toLocaleDateString()} ${resource.publishTime.toLocaleTimeString()}`
-          }}
-        </span>
+        <div class="is-flex justify-between has-horizontally-padded">
+          <div id="videoTitle">
+            <div class="ts-header is-truncated">{{ resource.streamer }}</div>
+            <span v-if="resource.isLive">
+              <span class="ts-icon is-circle-icon" :style="{ color: '#ff4141' }" />
+              Live
+            </span>
+            <span v-else>
+              {{
+                `${resource.publishTime.toLocaleDateString()} ${resource.publishTime.toLocaleTimeString()}`
+              }}
+            </span>
+          </div>
+          <div class="is-flex has-smaller-gap">
+            <div>
+              <button
+                class="button has-flex-center"
+                data-dropdown="share"
+                @pointerup="onPlayerPointerMove"
+              >
+                <span class="ts-icon is-share-nodes-icon" />
+              </button>
+              <div
+                ref="shareDropdown"
+                class="ts-dropdown style-text"
+                data-name="share"
+                data-position="bottom-end"
+              >
+                <button class="item" @click="$emit('copy-link')">複製影片連結</button>
+                <button
+                  v-if="!resource.isLive"
+                  class="item"
+                  @click="$emit('copy-time-link', currentTime)"
+                >
+                  複製目前時間的連結
+                  <span class="description">{{ timeToText(currentTime) }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div
@@ -653,6 +707,10 @@ onUnmounted(() => {
 .auto-hidden,
 .auto-hidden * {
   cursor: none;
+}
+
+#videoTitle {
+  max-width: 80%;
 }
 
 /* Workaround tocas-ui's important */
