@@ -57,7 +57,7 @@ export const useRoute = () => {
       const parameterIndex = newParameters.findIndex((parameter) => parameter.startsWith(key))
       if (parameterIndex === -1 && value !== undefined) {
         newParameters.push(`${key}=${value}`)
-      } else if (value === undefined) {
+      } else if (parameterIndex !== -1 && value === undefined) {
         newParameters.splice(parameterIndex, 1)
       } else {
         newParameters[parameterIndex] = `${key}=${value}`
