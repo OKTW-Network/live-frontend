@@ -72,7 +72,6 @@ const durationText = computed(() => timeToText(duration.value))
 const playbackRate = ref(1)
 
 const updatePlayerStatus = () => {
-  isBuffering.value = false
   currentTime.value = draggingCurrentTime.value ?? videoRef.value?.currentTime
   duration.value = videoRef.value?.duration
   isPaused.value = videoRef.value?.paused
