@@ -1,8 +1,18 @@
-export function initHLS(resource, player) {
-  if (resource?.isLive && Hls.isSupported()) {
-    let hls
-    let qualityList
+export function changeQuality(
+    hls,
+    quality = -1,
+    perment = false
+  ) {
+  if (perment) { localStorage.setItem('config_quality', quality) }
+  const storedQuality = localStorage.getItem('config_quality')
+  hls.currentLevel = storedQuality !== null && !isNaN(parseInt(storedQuality)) ? parseInt(storedQuality) : quality
+}
 
+export function initHLS(resource, player) {
+  let hls = Object();
+  let qualityList = Array();
+  
+  if (resource?.isLive && Hls.isSupported()) {
     hls = new Hls({
       liveSyncDurationCount: 0,
       fetchSetup: (context) => new Request(context.url)
@@ -37,11 +47,7 @@ export function initHLS(resource, player) {
       qualityList.value = data.levels.map((i) =>
         i.height ? `${i.height}p (${i.bitrate / 1000}kbps)` : 'Source'
       )
-
-      const stored_quality = localStorage.getItem('config_quality')
-      change_quality(
-        stored_quality !== null && !isNaN(parseInt(stored_quality)) ? parseInt(stored_quality) : -1
-      )
+      changeQuality(hls)
     })
 
     // Workaround firefox codec test fail
@@ -64,4 +70,6 @@ export function initHLS(resource, player) {
     player.value.src = resource?.src
     player.value.addEventListener('loadedmetadata', () => player.value.play())
   }
+
+  return hls, qualityList
 }
