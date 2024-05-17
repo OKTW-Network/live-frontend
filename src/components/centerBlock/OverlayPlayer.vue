@@ -2,9 +2,12 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { debounce } from 'lodash'
 
+import WatchTogetherStatus from './OverlayPlayer/Sharing/WatchTogetherStatus.vue'
+import WatchTogetherConfig from './OverlayPlayer/Sharing/WatchTogetherConfig.vue'
 import VolumeControl from './OverlayPlayer/VolumeControl.vue'
 import ActionSnackbar from './OverlayPlayer/ActionSnackBar.vue'
 import ErrorBlankSlate from '../ErrorBlankSlate.vue'
+import { useWatchTogether } from '../../util/websocket'
 
 const props = defineProps({
   resource: {
@@ -24,12 +27,17 @@ const props = defineProps({
     required: false,
     default: undefined
   },
+  watchTogetherCode: {
+    type: String,
+    required: false,
+    default: undefined
+  },
   isError: {
     type: Boolean,
     default: false
   }
 })
-defineEmits(['change-quality', 'copy-link', 'copy-time-link'])
+defineEmits(['change-quality', 'copy-link', 'copy-time-link', 'copy-watch-together-link', 'start-new-watch-together'])
 
 // Handle time code
 const restoreTime = () => {
@@ -38,6 +46,28 @@ const restoreTime = () => {
     setTime()
   }
 }
+
+// Handle watch together
+const {
+  syncedTime,
+  nickname,
+  isHost,
+  hostName,
+  locked,
+  viewerCount,
+  readyState,
+  setNickname,
+  syncTime,
+  setLocked,
+  connect,
+  disconnect
+} = useWatchTogether()
+
+const isWatchTogetherActive = computed(() => props.watchTogetherCode !== undefined && readyState.value)
+const isWatchTogetherConfigOpen = ref(false)
+const isPlayControlLocked = computed(
+  () => isWatchTogetherActive.value && !isHost.value && locked.value
+)
 
 // Handle touch mode
 const touchMode = ref(false)
@@ -113,28 +143,33 @@ const playbackRateList = ref([
 ])
 
 const setPlaybackRate = (rate) => {
+  if (isPlayControlLocked.value) return
   videoRef.value.playbackRate = rate
   updatePlayerStatus()
 }
 
 const debounceSeekDrag = () => {
+  if (isPlayControlLocked.value) return
   draggingCurrentTime.value = currentTime.value
   debounce(setTime, 500)()
 }
 
 const setTime = () => {
+  if (isPlayControlLocked.value) return
   draggingCurrentTime.value = undefined
   videoRef.value.currentTime = currentTime.value
   updatePlayerStatus()
 }
 
 const seekForward = () => {
+  if (isPlayControlLocked.value) return
   currentTime.value = Math.min(currentTime.value + 5, duration.value)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('forward')
 }
 
 const seekBackward = () => {
+  if (isPlayControlLocked.value) return
   currentTime.value = Math.max(currentTime.value - 5, 0)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('backward')
@@ -142,6 +177,7 @@ const seekBackward = () => {
 
 const togglePlay = (showAction = false) => {
   if (!props.resource) return
+  if (isPlayControlLocked.value) return
   if (videoRef.value.paused) {
     videoRef.value.play()
   } else {
@@ -564,7 +600,13 @@ onUnmounted(() => {
               }}
             </span>
           </div>
-          <div class="is-flex has-smaller-gap">
+          <div class="is-flex">
+            <WatchTogetherStatus
+              v-if="isWatchTogetherActive"
+              :is-host="isHost"
+              :host-name="hostName"
+              :viewer-count="viewerCount"
+            />
             <div>
               <button
                 class="button has-flex-center"
@@ -588,6 +630,16 @@ onUnmounted(() => {
                   複製目前時間的連結
                   <span class="description">{{ timeToText(currentTime) }}</span>
                 </button>
+                <button
+                  v-if="!resource.isLive"
+                  class="item"
+                  @click="isWatchTogetherConfigOpen = true"
+                >
+                  {{ isWatchTogetherActive ? '管理' : '啟動' }}同時觀看
+                </button>
+                <button v-if="isWatchTogetherActive" class="item" @click="$emit('copy-watch-together-link')">
+                  複製同時觀看連結
+                </button>
               </div>
             </div>
           </div>
@@ -607,6 +659,7 @@ onUnmounted(() => {
           v-model="currentTime"
           :max="duration"
           step="any"
+          :disabled="isPlayControlLocked"
           @input="debounceSeekDrag"
         />
         <div class="is-flex justify-between" :class="{ 'has-horizontally-padded': !touchMode }">
@@ -698,8 +751,12 @@ onUnmounted(() => {
                   v-for="rateItem in playbackRateList"
                   :key="rateItem.value"
                   class="item"
-                  :class="{ 'is-selected': rateItem.value === playbackRate }"
+                  :class="{ 
+                    'is-selected': rateItem.value === playbackRate,
+                    'is-disabled': isPlayControlLocked
+                  }"
                   @click="setPlaybackRate(rateItem.value)"
+                  :disabled="isPlayControlLocked"
                 >
                   {{ rateItem.text }}
                 </button>
@@ -726,6 +783,20 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+  <WatchTogetherConfig
+    :model-open="isWatchTogetherConfigOpen"
+    :is-active="isWatchTogetherActive"
+    :is-host="isHost"
+    :host-name="hostName"
+    :viewer-count="viewerCount"
+    :nickname="nickname"
+    :is-locked="locked"
+    :watch-together-code="watchTogetherCode"
+    @nickname-change="setNickname"
+    @close="isWatchTogetherConfigOpen = false"
+    @lock-change="setLocked"
+    @start-new-watch-together="$emit('start-new-watch-together')"
+  />
 </template>
 
 <style scoped>
@@ -753,7 +824,7 @@ onUnmounted(() => {
 }
 
 #videoTitle {
-  max-width: 80%;
+  max-width: 65%;
 }
 
 /* Workaround tocas-ui's important */

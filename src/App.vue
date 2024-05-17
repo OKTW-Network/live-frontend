@@ -10,8 +10,9 @@ import ErrorBlankSlate from './components/ErrorBlankSlate.vue'
 import AgeRestrictPage from './components/AgeRestrictPage.vue'
 
 import { useViewport } from './util/viewport'
-import { useChat } from './util/chat'
+import { useChat } from './util/websocket'
 import { useRoute } from './util/routing'
+import { makeId } from './util/idGenerator'
 
 const liveUrl = `${import.meta.env.VITE_BACK_URL ?? ''}/live`
 const recordUrl = `${import.meta.env.VITE_BACK_URL ?? ''}/record`
@@ -38,7 +39,8 @@ const {
   targetFilename,
   getParameter,
   getUrlWithNewParameters,
-  getUrlWithoutParameters
+  getUrlWithoutParameters,
+  replaceHash
 } = useRoute()
 
 const playlistRef = ref(null)
@@ -154,8 +156,22 @@ const copyVideoLink = () => {
 }
 
 const copyTimeLink = (currentTime) => {
-  const newUrl = getUrlWithNewParameters({ t: Math.floor(currentTime) })
+  const newUrl = getUrlWithNewParameters({ t: Math.floor(currentTime), wt: undefined })
   navigator.clipboard.writeText(newUrl.href)
+}
+
+// handle watch together
+const watchTogetherCode = ref(getParameter('wt'))
+
+const copyWatchTogetherLink = () => {
+  const newUrl = getUrlWithNewParameters({ wt: watchTogetherCode, t: undefined })
+  navigator.clipboard.writeText(newUrl.href)
+}
+
+const startNewWatchTogether = () => {
+  const newUrl = getUrlWithNewParameters({ wt: makeId(8), t: undefined })
+  console.error(newUrl)
+  replaceHash(newUrl.hash)
 }
 
 watch(
@@ -166,6 +182,7 @@ watch(
     scrollToTop()
     refreshChat()
     time.value = getParameter('t')
+    watchTogetherCode.value = getParameter('wt')
     detectNewStreamer()
   }
 )
@@ -225,8 +242,11 @@ const onDrawerBackgroundClick = (event) => {
               :filename="targetFilename"
               :list="recordList.concat(livestreamList.filter((i) => i.isLive))"
               :time="time"
+              :watch-together-code="watchTogetherCode"
               @copy-link="copyVideoLink"
               @copy-time-link="copyTimeLink"
+              @copy-watch-together-link="copyWatchTogetherLink"
+              @start-new-watch-together="startNewWatchTogether"
             />
           </div>
           <div class="cell">
