@@ -327,8 +327,6 @@ const withHandlePointerEvent = (event, callback) => {
 }
 
 // Handle player click
-const isFirstClickUIHidden = ref(false)
-
 const doubleClickCount = ref(0)
 
 const doubleClickTimer = ref(null)
@@ -348,7 +346,6 @@ const handlePlayerClick = (event) => {
   // Prevent click on icon button
   if (event.target instanceof HTMLSpanElement) return
 
-  const isHidden = isPlayerHidden()
   const isTouchEvent = isTouch(event)
 
   // Set touch mode
@@ -356,72 +353,46 @@ const handlePlayerClick = (event) => {
 
   doubleClickCount.value++
   if (doubleClickCount.value === 1) {
-    // Trigger first click
-    handlePlayerFirstClick(event, isHidden, isTouchEvent)
-  } else if (doubleClickCount.value === 2) {
-    // Reset timer and count
-    resetDoubleClick()
-    // Trigger second click
-    handlePlayerSecondClick(event, isTouchEvent)
-  }
-}
-
-const handlePlayerFirstClick = (event, isHidden, isTouchEvent) => {
-  // Store first click UI hidden status
-  isFirstClickUIHidden.value = isHidden
-
-  if (!isTouchEvent) {
-    // Toggle play when dropdown is not visible
-    if (!isDropdownVisible()) {
+    // First click
+    if (isTouchEvent) {
+      if (isPlayerHidden()) {
+        showUIAndResetAutoHideTimer(isTouchEvent)
+      } else {
+        hideUI()
+      }
+    } else {
       showUIAndResetAutoHideTimer(isTouchEvent)
       togglePlay(true)
     }
-  } else if (isHidden) {
-    showUIAndResetAutoHideTimer(isTouchEvent)
-  }
 
-  // Delay 300 to detect double click and hide UI on touch
-  doubleClickTimer.value = setTimeout(() => {
+    // Double click timer
+    clearTimeout(doubleClickTimer.value)
+    doubleClickTimer.value = setTimeout(() => {
+      resetDoubleClick()
+    }, 300)
+  } else if (doubleClickCount.value === 2) {
+    // Second click
     resetDoubleClick()
-    if (isTouchEvent && !isHidden) {
-      hideUI()
-    }
-  }, 300)
-}
-
-const handlePlayerSecondClick = (event, isTouchEvent) => {
-  // Skip if video is not ready or dropdown is visible
-  if (!videoRef.value || isDropdownVisible()) {
-    return
-  }
-
-  if (isTouchEvent && !isFirstClickUIHidden.value) {
-    // Trigger show UI to reset auto hide timer
-    showUIAndResetAutoHideTimer(isTouchEvent)
-
-    // Get click position
-    const elementOffsetX = event.target.getBoundingClientRect().x
-    const eventX = event.clientX - elementOffsetX
-
-    // Click center will toggle play, left and right sides will seek time
-    const leftSideEnd = videoRef.value.clientWidth / 3
-    const RightSideStart = leftSideEnd * 2
-    if (eventX < leftSideEnd) {
-      seekBackward()
-    } else if (eventX > RightSideStart) {
-      seekForward()
-    } else {
-      togglePlay()
-    }
-  } else {
-    toggleFullscreen()
 
     if (isTouchEvent) {
-      hideUI()
+      // Get click position
+      const eventX = event.clientX - event.target.getBoundingClientRect().x
+
+      // Click center will toggle play, left and right sides will seek time
+      const leftSideEnd = videoRef.value.clientWidth / 3
+      const RightSideStart = leftSideEnd * 2
+      if (eventX < leftSideEnd) {
+        seekBackward()
+      } else if (eventX > RightSideStart) {
+        seekForward()
+      } else {
+        togglePlay()
+      }
     } else {
-      showUIAndResetAutoHideTimer(isTouchEvent)
+      toggleFullscreen()
       togglePlay(true)
     }
+    hideUI()
   }
 }
 
