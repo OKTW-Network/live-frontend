@@ -523,7 +523,7 @@ onUnmounted(() => {
     <div
       v-if="resource && touchMode"
       id="mobileCenterControl"
-      class="is-hidable has-flex-center has-horizontally-padded-huge"
+      class="is-hidable has-flex-center"
     >
       <button
         class="button-touch has-flex-center"
