@@ -156,11 +156,14 @@ const togglePlay = (showAction = false) => {
 const toggleFullscreen = () => {
   if (!props.resource) return
   if (!document.fullscreenElement) {
-    overlayVideoRef.value?.requestFullscreen().catch((err) => {
+    overlayVideoRef.value?.requestFullscreen().then(() => {
+      screen.orientation.lock('landscape').catch(() => {})
+    }).catch((err) => {
       console.error(`Error attempting to enable fullscreen mode: ${err.message} (${err.name})`)
     })
   } else {
     document.exitFullscreen()
+    screen.orientation.unlock().catch(() => {})
   }
 }
 
