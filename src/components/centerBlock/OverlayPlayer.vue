@@ -359,10 +359,22 @@ const handlePlayerClick = (event) => {
   if (doubleClickCount.value === 1) {
     // First click
     if (isTouchEvent) {
-      if (isPlayerHidden()) {
+      // Get click position
+      const eventX = event.clientX - event.target.getBoundingClientRect().x
+      // Calculate left and right side
+      const leftSideEnd = videoRef.value.clientWidth / 3
+      const RightSideStart = leftSideEnd * 2
+
+      if (eventX > leftSideEnd && eventX < RightSideStart) {
+        // Center
         showUIAndResetAutoHideTimer(isTouchEvent)
+        togglePlay()
       } else {
-        hideUI()
+        if (isPlayerHidden()) {
+          showUIAndResetAutoHideTimer(isTouchEvent)
+        } else {
+          hideUI()
+        }
       }
     } else {
       showUIAndResetAutoHideTimer(isTouchEvent)
@@ -382,7 +394,7 @@ const handlePlayerClick = (event) => {
       // Get click position
       const eventX = event.clientX - event.target.getBoundingClientRect().x
 
-      // Click center will toggle play, left and right sides will seek time
+      // Click center will toggle fullscreen, left and right sides will seek time
       const leftSideEnd = videoRef.value.clientWidth / 3
       const RightSideStart = leftSideEnd * 2
       if (eventX < leftSideEnd) {
@@ -390,6 +402,7 @@ const handlePlayerClick = (event) => {
       } else if (eventX > RightSideStart) {
         seekForward()
       } else {
+        toggleFullscreen()
         togglePlay()
       }
     } else {
