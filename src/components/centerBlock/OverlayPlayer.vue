@@ -300,6 +300,7 @@ const handlePlayerPointerEvent = (event) => {
   // Set touch mode
   touchMode.value = isTouchEvent
 
+  if (isTouchEvent && event.type === 'pointermove') return // Skip trigger move event on touch mode
   showUIAndResetAutoHideTimer(isTouchEvent)
 }
 
