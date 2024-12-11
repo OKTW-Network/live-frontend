@@ -156,11 +156,14 @@ const togglePlay = (showAction = false) => {
 const toggleFullscreen = () => {
   if (!props.resource) return
   if (!document.fullscreenElement) {
-    overlayVideoRef.value?.requestFullscreen().catch((err) => {
+    overlayVideoRef.value?.requestFullscreen().then(() => {
+      screen.orientation.lock('landscape').catch(() => {})
+    }).catch((err) => {
       console.error(`Error attempting to enable fullscreen mode: ${err.message} (${err.name})`)
     })
   } else {
     document.exitFullscreen()
+    screen.orientation.unlock().catch(() => {})
   }
 }
 
@@ -300,6 +303,7 @@ const handlePlayerPointerEvent = (event) => {
   // Set touch mode
   touchMode.value = isTouchEvent
 
+  if (isTouchEvent && event.type === 'pointermove') return // Skip trigger move event on touch mode
   showUIAndResetAutoHideTimer(isTouchEvent)
 }
 
@@ -327,8 +331,6 @@ const withHandlePointerEvent = (event, callback) => {
 }
 
 // Handle player click
-const isFirstClickUIHidden = ref(false)
-
 const doubleClickCount = ref(0)
 
 const doubleClickTimer = ref(null)
@@ -348,7 +350,6 @@ const handlePlayerClick = (event) => {
   // Prevent click on icon button
   if (event.target instanceof HTMLSpanElement) return
 
-  const isHidden = isPlayerHidden()
   const isTouchEvent = isTouch(event)
 
   // Set touch mode
@@ -356,72 +357,59 @@ const handlePlayerClick = (event) => {
 
   doubleClickCount.value++
   if (doubleClickCount.value === 1) {
-    // Trigger first click
-    handlePlayerFirstClick(event, isHidden, isTouchEvent)
-  } else if (doubleClickCount.value === 2) {
-    // Reset timer and count
-    resetDoubleClick()
-    // Trigger second click
-    handlePlayerSecondClick(event, isTouchEvent)
-  }
-}
+    // First click
+    if (isTouchEvent) {
+      // Get click position
+      const eventX = event.clientX - event.target.getBoundingClientRect().x
+      // Calculate left and right side
+      const leftSideEnd = videoRef.value.clientWidth / 3
+      const RightSideStart = leftSideEnd * 2
 
-const handlePlayerFirstClick = (event, isHidden, isTouchEvent) => {
-  // Store first click UI hidden status
-  isFirstClickUIHidden.value = isHidden
-
-  if (!isTouchEvent) {
-    // Toggle play when dropdown is not visible
-    if (!isDropdownVisible()) {
+      if (eventX > leftSideEnd && eventX < RightSideStart) {
+        // Center
+        showUIAndResetAutoHideTimer(isTouchEvent)
+        togglePlay()
+      } else {
+        if (isPlayerHidden()) {
+          showUIAndResetAutoHideTimer(isTouchEvent)
+        } else {
+          hideUI()
+        }
+      }
+    } else {
       showUIAndResetAutoHideTimer(isTouchEvent)
       togglePlay(true)
     }
-  } else if (isHidden) {
-    showUIAndResetAutoHideTimer(isTouchEvent)
-  }
 
-  // Delay 300 to detect double click and hide UI on touch
-  doubleClickTimer.value = setTimeout(() => {
+    // Double click timer
+    clearTimeout(doubleClickTimer.value)
+    doubleClickTimer.value = setTimeout(() => {
+      resetDoubleClick()
+    }, 300)
+  } else if (doubleClickCount.value === 2) {
+    // Second click
     resetDoubleClick()
-    if (isTouchEvent && !isHidden) {
-      hideUI()
-    }
-  }, 300)
-}
-
-const handlePlayerSecondClick = (event, isTouchEvent) => {
-  // Skip if video is not ready or dropdown is visible
-  if (!videoRef.value || isDropdownVisible()) {
-    return
-  }
-
-  if (isTouchEvent && !isFirstClickUIHidden.value) {
-    // Trigger show UI to reset auto hide timer
-    showUIAndResetAutoHideTimer(isTouchEvent)
-
-    // Get click position
-    const elementOffsetX = event.target.getBoundingClientRect().x
-    const eventX = event.clientX - elementOffsetX
-
-    // Click center will toggle play, left and right sides will seek time
-    const leftSideEnd = videoRef.value.clientWidth / 3
-    const RightSideStart = leftSideEnd * 2
-    if (eventX < leftSideEnd) {
-      seekBackward()
-    } else if (eventX > RightSideStart) {
-      seekForward()
-    } else {
-      togglePlay()
-    }
-  } else {
-    toggleFullscreen()
 
     if (isTouchEvent) {
-      hideUI()
+      // Get click position
+      const eventX = event.clientX - event.target.getBoundingClientRect().x
+
+      // Click center will toggle fullscreen, left and right sides will seek time
+      const leftSideEnd = videoRef.value.clientWidth / 3
+      const RightSideStart = leftSideEnd * 2
+      if (eventX < leftSideEnd) {
+        seekBackward()
+      } else if (eventX > RightSideStart) {
+        seekForward()
+      } else {
+        toggleFullscreen()
+        togglePlay()
+      }
     } else {
-      showUIAndResetAutoHideTimer(isTouchEvent)
+      toggleFullscreen()
       togglePlay(true)
     }
+    hideUI()
   }
 }
 
@@ -535,7 +523,7 @@ onUnmounted(() => {
     <div
       v-if="resource && touchMode"
       id="mobileCenterControl"
-      class="is-hidable has-flex-center has-horizontally-padded-huge"
+      class="is-hidable has-flex-center"
     >
       <button
         class="button-touch has-flex-center"
