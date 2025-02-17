@@ -170,6 +170,17 @@ const toggleFullscreen = () => {
 const setBufferAndErrorState = (buffering, error) => {
   isBuffering.value = buffering
   isVideoError.value = error
+
+  // Try recover video
+  if (error) {
+    videoRef.value.pause()
+    const time = videoRef.value.currentTime
+    videoRef.value.load()
+    videoRef.value.currentTime = time
+    videoRef.value.play()
+      .then(() => isVideoError.value = false).catch((err) => console.error(err))
+      .then(() => updatePlayerStatus())
+  }
 }
 
 // Handle video volume
