@@ -102,6 +102,27 @@ const handlePlayerLoaded = () => {
   }
 }
 
+const handlePlayerPlay = () => {
+  isBuffering.value = false
+  isVideoError.value = false
+}
+
+const handlePlayerError = (event) => {
+  isBuffering.value = false
+  isVideoError.value = true
+
+  // Try recover video
+  if (event.type === 'error') {
+    videoRef.value.pause()
+    const time = videoRef.value.currentTime
+    videoRef.value.load()
+    videoRef.value.currentTime = time
+    videoRef.value.play()
+      .then(() => isVideoError.value = false).catch((err) => console.error(err))
+      .then(() => updatePlayerStatus())
+  }
+}
+
 const playbackRateList = ref([
   { value: 0.25, text: '0.25x' },
   { value: 0.5, text: '0.5x' },
@@ -164,22 +185,6 @@ const toggleFullscreen = () => {
   } else {
     document.exitFullscreen()
     screen.orientation.unlock().catch(() => {})
-  }
-}
-
-const setBufferAndErrorState = (buffering, error) => {
-  isBuffering.value = buffering
-  isVideoError.value = error
-
-  // Try recover video
-  if (error) {
-    videoRef.value.pause()
-    const time = videoRef.value.currentTime
-    videoRef.value.load()
-    videoRef.value.currentTime = time
-    videoRef.value.play()
-      .then(() => isVideoError.value = false).catch((err) => console.error(err))
-      .then(() => updatePlayerStatus())
   }
 }
 
@@ -518,8 +523,8 @@ onUnmounted(() => {
       @loadstart="isBuffering = true"
       @loadeddata="handlePlayerLoaded"
       @waiting="isBuffering = true"
-      @playing="setBufferAndErrorState(false, false)"
-      @error="setBufferAndErrorState(false, true)"
+      @playing="handlePlayerPlay"
+      @error="handlePlayerError"
       class="has-full-size"
       :src="resource?.isLive ? undefined : resource?.src"
     />
