@@ -102,7 +102,7 @@ const handlePlayerLoaded = () => {
   }
 }
 
-const handlePlayerPlay = () => {
+const handlePlayerPlaying = () => {
   isBuffering.value = false
   isVideoError.value = false
 }
@@ -524,7 +524,7 @@ onUnmounted(() => {
       @loadstart="isBuffering = true"
       @loadeddata="handlePlayerLoaded"
       @waiting="isBuffering = true"
-      @playing="handlePlayerPlay"
+      @playing="handlePlayerPlaying"
       @error="handlePlayerError"
       class="has-full-size"
       :src="resource?.isLive ? undefined : resource?.src"
