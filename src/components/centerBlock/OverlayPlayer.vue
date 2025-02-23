@@ -108,14 +108,13 @@ const handlePlayerPlaying = () => {
 }
 
 const handlePlayerError = (event) => {
+  console.error(`Video error: ${event.target.error.code} (${event.target.error.message})`)
   isBuffering.value = false
   isVideoError.value = true
 
   // Try recover video
   // MEDIA_ERR_DECODE
   if (event.target.error.code === 3) {
-    console.error(`Video error: ${event.target.error.code} (${event.target.error.message})`)
-
     videoRef.value.pause()
     const time = videoRef.value.currentTime
     videoRef.value.load()
