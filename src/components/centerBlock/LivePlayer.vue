@@ -65,21 +65,6 @@ const initHls = () => {
         stored_quality !== null && !isNaN(parseInt(stored_quality)) ? parseInt(stored_quality) : -1
       )
     })
-
-    // Workaround firefox codec test fail
-    let origListener = hls.value.listeners(Hls.Events.BUFFER_CODECS)
-    hls.value.removeAllListeners([Hls.Events.BUFFER_CODECS])
-    hls.value.on(Hls.Events.BUFFER_CODECS, (event, data) => {
-      if (
-        data.video &&
-        data.video.container === 'video/mp4' &&
-        data.video.codec &&
-        !MediaSource.isTypeSupported(`${data.video.container};codecs=${data.video.codec}`)
-      ) {
-        data.video.codec = 'avc1.640034' // Override level to 5.2
-      }
-    })
-    origListener.forEach((f) => hls.value.on(Hls.Events.BUFFER_CODECS, f))
   }
   // Fuck you apple
   else if (player.value.canPlayType('application/vnd.apple.mpegurl')) {
