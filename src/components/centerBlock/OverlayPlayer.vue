@@ -34,7 +34,8 @@ defineEmits(['change-quality', 'copy-link', 'copy-time-link'])
 // Handle time code
 const restoreTime = () => {
   if (props.time && !isNaN(props.time)) {
-    currentTime.value = Math.max(Math.min(parseInt(props.time), duration.value), 0)
+    const t = Math.max(Math.min(parseInt(props.time), duration.value || Infinity), 0)
+    draggingCurrentTime.value = t
     setTime()
   }
 }
@@ -51,6 +52,10 @@ const videoRef = ref(null)
 
 const overlayVideoRef = ref(null)
 
+const progressRangeDesktopRef = ref(null)
+const progressRangeTouchRef = ref(null)
+const timeTextRef = ref(null)
+
 const isVideoError = ref(false)
 
 const isBuffering = ref(false)
@@ -59,9 +64,9 @@ const isPaused = ref(true)
 
 const isFullscreen = ref(false)
 
+// Reactive currentTime is only updated on whole-second changes (share link etc.).
+// Hot path during playback writes the range and clock via DOM to avoid Vue re-renders.
 const currentTime = ref(0)
-
-const timeText = computed(() => timeToText(currentTime.value))
 
 const draggingCurrentTime = ref(undefined)
 
@@ -71,9 +76,25 @@ const durationText = computed(() => timeToText(duration.value))
 
 const playbackRate = ref(1)
 
+const writeProgressDom = (t) => {
+  const value = String(t)
+  if (progressRangeDesktopRef.value) progressRangeDesktopRef.value.value = value
+  if (progressRangeTouchRef.value) progressRangeTouchRef.value.value = value
+  if (timeTextRef.value) timeTextRef.value.textContent = timeToText(t)
+}
+
 // Split media UI sync so timeupdate does not rewrite unrelated state every tick.
 const syncCurrentTime = () => {
-  currentTime.value = draggingCurrentTime.value ?? videoRef.value?.currentTime ?? 0
+  if (draggingCurrentTime.value !== undefined) {
+    writeProgressDom(draggingCurrentTime.value)
+    return
+  }
+  const t = videoRef.value?.currentTime ?? 0
+  writeProgressDom(t)
+  // Keep Vue currentTime at second resolution for share/copy-time only.
+  if (Math.floor(t) !== Math.floor(currentTime.value)) {
+    currentTime.value = t
+  }
 }
 
 const syncDuration = () => {
@@ -160,25 +181,32 @@ const setPlaybackRate = (rate) => {
   syncPlaybackRate()
 }
 
-const debounceSeekDrag = () => {
-  draggingCurrentTime.value = currentTime.value
+const handleSeekInput = (event) => {
+  const t = parseFloat(event.target.value)
+  if (isNaN(t)) return
+  draggingCurrentTime.value = t
+  writeProgressDom(t)
   debounce(setTime, 500)()
 }
 
 const setTime = () => {
+  const t = draggingCurrentTime.value ?? currentTime.value
   draggingCurrentTime.value = undefined
-  videoRef.value.currentTime = currentTime.value
-  syncCurrentTime()
+  if (videoRef.value) videoRef.value.currentTime = t
+  currentTime.value = t
+  writeProgressDom(t)
 }
 
 const seekForward = () => {
-  currentTime.value = Math.min(currentTime.value + 5, duration.value)
+  const base = videoRef.value?.currentTime ?? currentTime.value
+  draggingCurrentTime.value = Math.min(base + 5, duration.value || Infinity)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('forward')
 }
 
 const seekBackward = () => {
-  currentTime.value = Math.max(currentTime.value - 5, 0)
+  const base = videoRef.value?.currentTime ?? currentTime.value
+  draggingCurrentTime.value = Math.max(base - 5, 0)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('backward')
 }
@@ -635,12 +663,13 @@ onUnmounted(() => {
       <div class="ts-content" style="color: #fff">
         <input
           v-if="!touchMode"
+          ref="progressRangeDesktopRef"
           type="range"
           class="has-full-width has-cursor-pointer player-slider"
-          v-model="currentTime"
           :max="duration"
           step="any"
-          @input="debounceSeekDrag"
+          value="0"
+          @input="handleSeekInput"
         />
         <div class="is-flex justify-between" :class="{ 'has-horizontally-padded': !touchMode }">
           <div class="is-flex">
@@ -664,7 +693,7 @@ onUnmounted(() => {
               @update:volume="setVolume"
             />
             <span>
-              {{ timeText }}
+              <span ref="timeTextRef">00:00:00</span>
               <span v-if="!isNaN(duration)"> / {{ durationText }} </span>
             </span>
           </div>
@@ -749,12 +778,13 @@ onUnmounted(() => {
         </div>
         <input
           v-if="touchMode"
+          ref="progressRangeTouchRef"
           type="range"
           class="has-full-width has-cursor-pointer player-slider"
-          v-model="currentTime"
           :max="duration"
           step="any"
-          @input="debounceSeekDrag"
+          value="0"
+          @input="handleSeekInput"
         />
       </div>
     </div>
