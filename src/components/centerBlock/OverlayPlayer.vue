@@ -342,13 +342,16 @@ const isDropdownVisible = () =>
   shareDropdown.value?.classList.contains('is-visible')
 
 // Handle show / (auto) hide UI
-const autoHideTimer = ref(null)
+// Track last activity and use a single timeout instead of clear+set on every pointermove.
+let autoHideTimerId = null
+let lastActivityAt = 0
+let autoHideDelayMs = 1000
 const isPlayerHidden = () => overlayVideoRef.value?.classList.contains('auto-hidden') ?? false
 
 const resetAutoHideTimer = () => {
-  if (autoHideTimer.value) {
-    clearTimeout(autoHideTimer.value)
-    autoHideTimer.value = null
+  if (autoHideTimerId) {
+    clearTimeout(autoHideTimerId)
+    autoHideTimerId = null
   }
 }
 
@@ -356,19 +359,26 @@ const hideUI = () => {
   // Skip if dropdown is visible
   if (isDropdownVisible()) return
 
-  resetAutoHideTimer()
+  const idleFor = Date.now() - lastActivityAt
+  if (idleFor < autoHideDelayMs) {
+    autoHideTimerId = setTimeout(hideUI, autoHideDelayMs - idleFor)
+    return
+  }
 
+  resetAutoHideTimer()
   overlayVideoRef.value?.classList.add('auto-hidden')
 }
 
 const showUIAndResetAutoHideTimer = (isTouchEvent = false) => {
-  resetAutoHideTimer()
-
-  // set timeout to wait of idle time
-  const t = setTimeout(hideUI, (isTouchEvent ? 2 : 1) * 1000)
-  autoHideTimer.value = t
+  lastActivityAt = Date.now()
+  autoHideDelayMs = (isTouchEvent ? 2 : 1) * 1000
 
   overlayVideoRef.value?.classList.remove('auto-hidden')
+
+  // Only schedule hide when no timer is already pending (pointermove no longer thrashs timers).
+  if (!autoHideTimerId) {
+    autoHideTimerId = setTimeout(hideUI, autoHideDelayMs)
+  }
 }
 
 const handlePlayerPointerEvent = (event) => {
@@ -807,7 +817,10 @@ onUnmounted(() => {
 /* Auto Hide */
 .is-hidable {
   opacity: 0;
-  transition-duration: 500ms;
+  visibility: hidden;
+  pointer-events: none;
+  transition-property: opacity, visibility;
+  transition-duration: 200ms;
 }
 
 .ts-mask.is-faded.is-top {
@@ -820,6 +833,8 @@ onUnmounted(() => {
 
 #playerContainer:not(.auto-hidden) > .is-hidable {
   opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .auto-hidden,
