@@ -56,6 +56,11 @@ const ageRestrict = (i) => {
 
 const isMobile = computed(() => viewWidth.value <= 1023)
 
+// Stable list reference so chat-driven App re-renders do not invalidate player/playlist props.
+const mediaList = computed(() =>
+  recordList.value.concat(livestreamList.value.filter((i) => i.isLive))
+)
+
 const refreshChat = () => {
   if (!isProfilePage.value) {
     disconnect()
@@ -223,7 +228,7 @@ const onDrawerBackgroundClick = (event) => {
             <MediaPlayer
               v-if="livestreamList"
               :filename="targetFilename"
-              :list="recordList.concat(livestreamList.filter((i) => i.isLive))"
+              :list="mediaList"
               :time="time"
               @copy-link="copyVideoLink"
               @copy-time-link="copyTimeLink"
@@ -247,7 +252,7 @@ const onDrawerBackgroundClick = (event) => {
             <!-- Playlist -->
             <PlaylistView
               :selected-streamer="profileName"
-              :list="recordList.concat(livestreamList.filter((i) => i.isLive))"
+              :list="mediaList"
               @top="scrollToTop"
             />
           </div>
