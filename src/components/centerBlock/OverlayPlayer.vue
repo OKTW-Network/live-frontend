@@ -858,6 +858,11 @@ onUnmounted(() => {
   display: inline-flex;
 }
 
+#mediaPlayer {
+  /* Isolate video on its own compositor layer so chrome repaints hurt less on Firefox. */
+  transform: translateZ(0);
+}
+
 #playerContainer:not(:fullscreen) video {
   aspect-ratio: 16/9;
   max-height: 80vh;
