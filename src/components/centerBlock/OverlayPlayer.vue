@@ -71,21 +71,43 @@ const durationText = computed(() => timeToText(duration.value))
 
 const playbackRate = ref(1)
 
-const updatePlayerStatus = () => {
-  isBuffering.value = false
-  currentTime.value = draggingCurrentTime.value ?? videoRef.value?.currentTime
-  duration.value = videoRef.value?.duration
-  isPaused.value = videoRef.value?.paused
-  isMuted.value = videoRef.value?.muted
-  volume.value = videoRef.value?.muted
-    ? 0
-    : reverseVolume(videoAmplifier.value?.getAmpLevel() * 100)
+// Split media UI sync so timeupdate does not rewrite unrelated state every tick.
+const syncCurrentTime = () => {
+  currentTime.value = draggingCurrentTime.value ?? videoRef.value?.currentTime ?? 0
+}
+
+const syncDuration = () => {
+  duration.value = videoRef.value?.duration ?? 0
+}
+
+const syncPlayState = () => {
+  isPaused.value = videoRef.value?.paused ?? true
+}
+
+const syncMuteState = () => {
+  isMuted.value = videoRef.value?.muted ?? false
+}
+
+const syncFullscreen = () => {
   isFullscreen.value = document.fullscreenElement !== null
-  playbackRate.value = videoRef.value?.playbackRate
+}
+
+const syncPlaybackRate = () => {
+  playbackRate.value = videoRef.value?.playbackRate ?? 1
+}
+
+const syncAllFromVideo = () => {
+  isBuffering.value = false
+  syncCurrentTime()
+  syncDuration()
+  syncPlayState()
+  syncMuteState()
+  syncFullscreen()
+  syncPlaybackRate()
 }
 
 const handlePlayerLoaded = () => {
-  updatePlayerStatus()
+  syncAllFromVideo()
   restoreTime()
   showUIAndResetAutoHideTimer()
 
@@ -135,7 +157,7 @@ const playbackRateList = ref([
 
 const setPlaybackRate = (rate) => {
   videoRef.value.playbackRate = rate
-  updatePlayerStatus()
+  syncPlaybackRate()
 }
 
 const debounceSeekDrag = () => {
@@ -146,7 +168,7 @@ const debounceSeekDrag = () => {
 const setTime = () => {
   draggingCurrentTime.value = undefined
   videoRef.value.currentTime = currentTime.value
-  updatePlayerStatus()
+  syncCurrentTime()
 }
 
 const seekForward = () => {
@@ -168,7 +190,7 @@ const togglePlay = (showAction = false) => {
   } else {
     videoRef.value.pause()
   }
-  updatePlayerStatus()
+  syncPlayState()
   if (showAction === true) {
     actionSnackBarRef.value?.emitSnackbar(videoRef.value.paused ? 'pause' : 'play')
   }
@@ -227,7 +249,7 @@ const reverseVolume = (volume) => {
 const setVolume = () => {
   if (Math.round(volume.value) === 0) {
     videoRef.value.muted = true
-    updatePlayerStatus()
+    syncMuteState()
     return
   }
 
@@ -235,7 +257,7 @@ const setVolume = () => {
   videoAmplifier.value?.context.resume()
   videoAmplifier.value?.amplify(convertVolume(volume.value) / 100)
   localStorage.setItem('player_volume', volume.value)
-  updatePlayerStatus()
+  syncMuteState()
 }
 
 const volumeUp = () => {
@@ -268,7 +290,7 @@ const resetVolume = () => {
 const toggleMute = (showAction = false) => {
   videoRef.value.muted = !videoRef.value.muted
   videoAmplifier.value?.context.resume()
-  updatePlayerStatus()
+  syncMuteState()
   if (showAction === true) {
     actionSnackBarRef.value?.emitSnackbar(videoRef.value.muted ? 'volumeMute' : 'volumeUnmute')
   }
@@ -495,6 +517,7 @@ watch(
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeyDown)
+  document.addEventListener('fullscreenchange', syncFullscreen)
   if (isNaN(volume.value)) {
     resetVolume()
   }
@@ -503,6 +526,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeyDown)
+  document.removeEventListener('fullscreenchange', syncFullscreen)
 })
 </script>
 
@@ -517,8 +541,13 @@ onUnmounted(() => {
       id="mediaPlayer"
       ref="videoRef"
       crossorigin="anonymous"
-      @timeupdate="updatePlayerStatus"
-      @seeking="updatePlayerStatus"
+      @timeupdate="syncCurrentTime"
+      @seeking="syncCurrentTime"
+      @durationchange="syncDuration"
+      @play="syncPlayState"
+      @pause="syncPlayState"
+      @volumechange="syncMuteState"
+      @ratechange="syncPlaybackRate"
       @pointerup="handlePlayerClick"
       @loadstart="isBuffering = true"
       @loadeddata="handlePlayerLoaded"
