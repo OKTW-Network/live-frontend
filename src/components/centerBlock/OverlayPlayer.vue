@@ -181,20 +181,23 @@ const setPlaybackRate = (rate) => {
   syncPlaybackRate()
 }
 
-const handleSeekInput = (event) => {
-  const t = parseFloat(event.target.value)
-  if (isNaN(t)) return
-  draggingCurrentTime.value = t
-  writeProgressDom(t)
-  debounce(setTime, 500)()
-}
-
 const setTime = () => {
   const t = draggingCurrentTime.value ?? currentTime.value
   draggingCurrentTime.value = undefined
   if (videoRef.value) videoRef.value.currentTime = t
   currentTime.value = t
   writeProgressDom(t)
+}
+
+// Create debounced seek once (lodash.debounce returns a new function each call).
+const debouncedSetTime = debounce(setTime, 500)
+
+const handleSeekInput = (event) => {
+  const t = parseFloat(event.target.value)
+  if (isNaN(t)) return
+  draggingCurrentTime.value = t
+  writeProgressDom(t)
+  debouncedSetTime()
 }
 
 const seekForward = () => {
@@ -652,7 +655,7 @@ onUnmounted(() => {
               <button
                 class="button has-flex-center"
                 data-dropdown="share"
-                @pointerup="onPlayerPointerMove"
+                @pointerup="handlePlayerPointerEvent"
               >
                 <span class="ts-icon is-share-nodes-icon" />
               </button>
