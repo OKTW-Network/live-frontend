@@ -239,26 +239,26 @@ const toggleFullscreen = () => {
 }
 
 // Handle video volume
-const videoAmplifier = computed(() => {
-  if (!videoRef.value) return null
-  const context = new (window.AudioContext || window.webkitAudioContext)(),
-    result = {
-      context: context,
-      source: context.createMediaElementSource(videoRef.value),
-      gain: context.createGain(),
-      media: videoRef.value,
-      amplify: function (multiplier) {
-        result.gain.gain.value = multiplier
-      },
-      getAmpLevel: function () {
-        return result.gain.gain.value
-      }
+// Web Audio boost is created once, only when volume > 100%, so typical
+// playback can stay on native video.volume (cheaper on Firefox).
+let videoAmplifier = null
+
+const ensureAmplifier = () => {
+  if (videoAmplifier || !videoRef.value) return videoAmplifier
+  const context = new (window.AudioContext || window.webkitAudioContext)()
+  const source = context.createMediaElementSource(videoRef.value)
+  const gain = context.createGain()
+  source.connect(gain)
+  gain.connect(context.destination)
+  gain.gain.value = 1
+  videoAmplifier = {
+    context,
+    amplify(multiplier) {
+      gain.gain.value = multiplier
     }
-  result.source.connect(result.gain)
-  result.gain.connect(context.destination)
-  result.amplify(1)
-  return result
-})
+  }
+  return videoAmplifier
+}
 
 const isMuted = ref(false)
 
@@ -269,21 +269,29 @@ const convertVolume = (volume) => {
   return 100 + (volume - 100) * 2
 }
 
-const reverseVolume = (volume) => {
-  if (volume <= 100) return volume
-  return 100 + (volume - 100) / 2
-}
-
 const setVolume = () => {
+  if (!videoRef.value) return
+
   if (Math.round(volume.value) === 0) {
     videoRef.value.muted = true
+    localStorage.setItem('player_volume', volume.value)
     syncMuteState()
     return
   }
 
   videoRef.value.muted = false
-  videoAmplifier.value?.context.resume()
-  videoAmplifier.value?.amplify(convertVolume(volume.value) / 100)
+
+  if (volume.value <= 100 && !videoAmplifier) {
+    // Native path: no MediaElementSource until boost is needed.
+    videoRef.value.volume = Math.min(volume.value / 100, 1)
+  } else {
+    // Once created, keep using gain with video.volume = 1.
+    const amp = ensureAmplifier()
+    videoRef.value.volume = 1
+    amp?.context.resume()
+    amp?.amplify(convertVolume(volume.value) / 100)
+  }
+
   localStorage.setItem('player_volume', volume.value)
   syncMuteState()
 }
@@ -317,7 +325,7 @@ const resetVolume = () => {
 
 const toggleMute = (showAction = false) => {
   videoRef.value.muted = !videoRef.value.muted
-  videoAmplifier.value?.context.resume()
+  videoAmplifier?.context.resume()
   syncMuteState()
   if (showAction === true) {
     actionSnackBarRef.value?.emitSnackbar(videoRef.value.muted ? 'volumeMute' : 'volumeUnmute')
@@ -555,6 +563,10 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('fullscreenchange', syncFullscreen)
+  if (videoAmplifier) {
+    videoAmplifier.context.close().catch(() => {})
+    videoAmplifier = null
+  }
 })
 </script>
 
