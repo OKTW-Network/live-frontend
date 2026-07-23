@@ -84,7 +84,10 @@ const writeProgressDom = (t) => {
 }
 
 // Split media UI sync so timeupdate does not rewrite unrelated state every tick.
+// When controls are auto-hidden, skip all progress work (DOM + Vue) until shown again.
 const syncCurrentTime = () => {
+  if (!controlsVisible && draggingCurrentTime.value === undefined) return
+
   if (draggingCurrentTime.value !== undefined) {
     writeProgressDom(draggingCurrentTime.value)
     return
@@ -349,7 +352,9 @@ const isDropdownVisible = () =>
 let autoHideTimerId = null
 let lastActivityAt = 0
 let autoHideDelayMs = 1000
-const isPlayerHidden = () => overlayVideoRef.value?.classList.contains('auto-hidden') ?? false
+// Plain flag (not ref): hot path for timeupdate early-exit; keep in sync with auto-hidden class.
+let controlsVisible = true
+const isPlayerHidden = () => !controlsVisible
 
 const resetAutoHideTimer = () => {
   if (autoHideTimerId) {
@@ -369,6 +374,7 @@ const hideUI = () => {
   }
 
   resetAutoHideTimer()
+  controlsVisible = false
   overlayVideoRef.value?.classList.add('auto-hidden')
 }
 
@@ -376,7 +382,11 @@ const showUIAndResetAutoHideTimer = (isTouchEvent = false) => {
   lastActivityAt = Date.now()
   autoHideDelayMs = (isTouchEvent ? 2 : 1) * 1000
 
+  const wasHidden = !controlsVisible
+  controlsVisible = true
   overlayVideoRef.value?.classList.remove('auto-hidden')
+  // Catch up progress bar / second-resolution currentTime after idle skip.
+  if (wasHidden) syncCurrentTime()
 
   // Only schedule hide when no timer is already pending (pointermove no longer thrashs timers).
   if (!autoHideTimerId) {
