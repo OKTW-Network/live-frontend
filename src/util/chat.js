@@ -1,5 +1,7 @@
 import { ref, onUnmounted } from 'vue'
 
+const MAX_MESSAGES = 200
+
 export const useChat = () => {
   const wsServer = 'wss://live.oktw.one/ws'
   const ws = ref(null)
@@ -38,7 +40,14 @@ export const useChat = () => {
         uuid.value.push(data.uuid)
         viewerCount.value = data.nowViewerCount
       }
-      messages.value.push(data)
+      messages.value.push({
+        ...data,
+        receivedAt: Date.now(),
+        id: `${data.uuid ?? 'anon'}-${Date.now()}-${messages.value.length}`
+      })
+      if (messages.value.length > MAX_MESSAGES) {
+        messages.value = messages.value.slice(-MAX_MESSAGES)
+      }
     })
     ws.value?.addEventListener('error', (e) => {
       console.error(e)

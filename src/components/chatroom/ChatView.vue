@@ -1,9 +1,9 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import MessageBubble from './MessageBubble.vue'
 
-defineProps({
+const props = defineProps({
   viewerCount: Number,
   messages: Array,
   uuid: Array,
@@ -16,8 +16,22 @@ defineEmits(['send-message', 'set-nickname'])
 const historyRef = ref(null)
 const message = ref('')
 
-const followChat = () =>
-  historyRef.value?.scrollTo({ top: historyRef.value?.scrollHeight, left: 0, behavior: 'smooth' })
+const bulletMessages = computed(
+  () => props.messages?.filter((i) => i.type === 'bulletScreenMessage') ?? []
+)
+
+const followChat = () => {
+  // Prefer instant scroll to avoid smooth-scroll animations competing with video frames.
+  historyRef.value?.scrollTo({ top: historyRef.value?.scrollHeight, left: 0, behavior: 'auto' })
+}
+
+watch(
+  () => bulletMessages.value.length,
+  async () => {
+    await nextTick()
+    followChat()
+  }
+)
 </script>
 
 <template>
@@ -32,13 +46,13 @@ const followChat = () =>
     <div ref="historyRef" class="cell is-fluid is-scrollable">
       <div class="ts-content">
         <MessageBubble
-          v-if="messages"
-          v-for:="(value, index) in messages.filter((i) => i.type === 'bulletScreenMessage')"
-          v-on:vue:mounted="followChat()"
+          v-for="(value, index) in bulletMessages"
+          :key="value.id ?? `${value.uuid}-${index}`"
           :index="index"
           :is-self="uuid.includes(value.uuid)"
           :author="value.sentFrom"
           :text="value.msg"
+          :received-at="value.receivedAt"
         />
       </div>
     </div>

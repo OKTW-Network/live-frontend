@@ -3,8 +3,17 @@ defineProps({
   index: Number,
   isSelf: Boolean,
   author: String,
-  text: String
+  text: String,
+  receivedAt: {
+    type: Number,
+    default: undefined
+  }
 })
+
+const formatTime = (receivedAt) => {
+  const date = receivedAt ? new Date(receivedAt) : new Date()
+  return date.toLocaleTimeString('en-US')
+}
 </script>
 
 <template>
@@ -14,7 +23,7 @@ defineProps({
         <div class="author">{{ author }}</div>
         <div class="text">{{ text }}</div>
         <div class="meta">
-          <div class="item">{{ new Date(Date.now()).toLocaleTimeString('en-US') }}</div>
+          <div class="item">{{ formatTime(receivedAt) }}</div>
         </div>
       </div>
     </div>

@@ -31,14 +31,6 @@ const props = defineProps({
 })
 defineEmits(['change-quality', 'copy-link', 'copy-time-link'])
 
-// Handle time code
-const restoreTime = () => {
-  if (props.time && !isNaN(props.time)) {
-    currentTime.value = Math.max(Math.min(parseInt(props.time), duration.value), 0)
-    setTime()
-  }
-}
-
 // Handle touch mode
 const touchMode = ref(false)
 const isTouch = (event) => event?.pointerType === 'touch'
@@ -51,6 +43,10 @@ const videoRef = ref(null)
 
 const overlayVideoRef = ref(null)
 
+const progressRangeDesktopRef = ref(null)
+const progressRangeTouchRef = ref(null)
+const timeTextRef = ref(null)
+
 const isVideoError = ref(false)
 
 const isBuffering = ref(false)
@@ -59,33 +55,93 @@ const isPaused = ref(true)
 
 const isFullscreen = ref(false)
 
+// Reactive currentTime is only updated on whole-second changes (share link etc.).
+// Hot path during playback writes the range and clock via DOM to avoid Vue re-renders.
 const currentTime = ref(0)
-
-const timeText = computed(() => timeToText(currentTime.value))
 
 const draggingCurrentTime = ref(undefined)
 
-const duration = ref(0)
+// NaN = unknown (matches HTMLMediaElement.duration before metadata).
+const duration = ref(NaN)
 
 const durationText = computed(() => timeToText(duration.value))
 
 const playbackRate = ref(1)
 
-const updatePlayerStatus = () => {
-  isBuffering.value = false
-  currentTime.value = draggingCurrentTime.value ?? videoRef.value?.currentTime
-  duration.value = videoRef.value?.duration
-  isPaused.value = videoRef.value?.paused
-  isMuted.value = videoRef.value?.muted
-  volume.value = videoRef.value?.muted
-    ? 0
-    : reverseVolume(videoAmplifier.value?.getAmpLevel() * 100)
+/** Clamp to [0, duration] when duration is finite; no upper bound for NaN/Infinity. */
+const clampTime = (t) => {
+  let x = Math.max(0, Number(t) || 0)
+  if (Number.isFinite(duration.value)) {
+    x = Math.min(x, duration.value)
+  }
+  return x
+}
+
+// Handle time code
+const restoreTime = () => {
+  if (props.time && !isNaN(props.time)) {
+    draggingCurrentTime.value = clampTime(parseInt(props.time, 10))
+    setTime()
+  }
+}
+
+const writeProgressDom = (t) => {
+  const value = String(t)
+  if (progressRangeDesktopRef.value) progressRangeDesktopRef.value.value = value
+  if (progressRangeTouchRef.value) progressRangeTouchRef.value.value = value
+  if (timeTextRef.value) timeTextRef.value.textContent = timeToText(t)
+}
+
+// Split media UI sync so timeupdate does not rewrite unrelated state every tick.
+// When controls are auto-hidden, skip all progress work (DOM + Vue) until shown again.
+const syncCurrentTime = () => {
+  if (!controlsVisible && draggingCurrentTime.value === undefined) return
+
+  if (draggingCurrentTime.value !== undefined) {
+    writeProgressDom(draggingCurrentTime.value)
+    return
+  }
+  const t = videoRef.value?.currentTime ?? 0
+  writeProgressDom(t)
+  // Keep Vue currentTime at second resolution for share/copy-time only.
+  if (Math.floor(t) !== Math.floor(currentTime.value)) {
+    currentTime.value = t
+  }
+}
+
+const syncDuration = () => {
+  // Preserve NaN / Infinity / finite seconds from the media element.
+  duration.value = videoRef.value?.duration ?? NaN
+}
+
+const syncPlayState = () => {
+  isPaused.value = videoRef.value?.paused ?? true
+}
+
+const syncMuteState = () => {
+  isMuted.value = videoRef.value?.muted ?? false
+}
+
+const syncFullscreen = () => {
   isFullscreen.value = document.fullscreenElement !== null
-  playbackRate.value = videoRef.value?.playbackRate
+}
+
+const syncPlaybackRate = () => {
+  playbackRate.value = videoRef.value?.playbackRate ?? 1
+}
+
+const syncAllFromVideo = () => {
+  isBuffering.value = false
+  syncCurrentTime()
+  syncDuration()
+  syncPlayState()
+  syncMuteState()
+  syncFullscreen()
+  syncPlaybackRate()
 }
 
 const handlePlayerLoaded = () => {
-  updatePlayerStatus()
+  syncAllFromVideo()
   restoreTime()
   showUIAndResetAutoHideTimer()
 
@@ -135,28 +191,38 @@ const playbackRateList = ref([
 
 const setPlaybackRate = (rate) => {
   videoRef.value.playbackRate = rate
-  updatePlayerStatus()
-}
-
-const debounceSeekDrag = () => {
-  draggingCurrentTime.value = currentTime.value
-  debounce(setTime, 500)()
+  syncPlaybackRate()
 }
 
 const setTime = () => {
+  const t = draggingCurrentTime.value ?? currentTime.value
   draggingCurrentTime.value = undefined
-  videoRef.value.currentTime = currentTime.value
-  updatePlayerStatus()
+  if (videoRef.value) videoRef.value.currentTime = t
+  currentTime.value = t
+  writeProgressDom(t)
+}
+
+// Create debounced seek once (lodash.debounce returns a new function each call).
+const debouncedSetTime = debounce(setTime, 500)
+
+const handleSeekInput = (event) => {
+  const t = parseFloat(event.target.value)
+  if (isNaN(t)) return
+  draggingCurrentTime.value = t
+  writeProgressDom(t)
+  debouncedSetTime()
 }
 
 const seekForward = () => {
-  currentTime.value = Math.min(currentTime.value + 5, duration.value)
+  const base = videoRef.value?.currentTime ?? currentTime.value
+  draggingCurrentTime.value = clampTime(base + 5)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('forward')
 }
 
 const seekBackward = () => {
-  currentTime.value = Math.max(currentTime.value - 5, 0)
+  const base = videoRef.value?.currentTime ?? currentTime.value
+  draggingCurrentTime.value = clampTime(base - 5)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('backward')
 }
@@ -168,7 +234,7 @@ const togglePlay = (showAction = false) => {
   } else {
     videoRef.value.pause()
   }
-  updatePlayerStatus()
+  syncPlayState()
   if (showAction === true) {
     actionSnackBarRef.value?.emitSnackbar(videoRef.value.paused ? 'pause' : 'play')
   }
@@ -189,26 +255,26 @@ const toggleFullscreen = () => {
 }
 
 // Handle video volume
-const videoAmplifier = computed(() => {
-  if (!videoRef.value) return null
-  const context = new (window.AudioContext || window.webkitAudioContext)(),
-    result = {
-      context: context,
-      source: context.createMediaElementSource(videoRef.value),
-      gain: context.createGain(),
-      media: videoRef.value,
-      amplify: function (multiplier) {
-        result.gain.gain.value = multiplier
-      },
-      getAmpLevel: function () {
-        return result.gain.gain.value
-      }
+// Web Audio boost is created once, only when volume > 100%, so typical
+// playback can stay on native video.volume (cheaper on Firefox).
+let videoAmplifier = null
+
+const ensureAmplifier = () => {
+  if (videoAmplifier || !videoRef.value) return videoAmplifier
+  const context = new (window.AudioContext || window.webkitAudioContext)()
+  const source = context.createMediaElementSource(videoRef.value)
+  const gain = context.createGain()
+  source.connect(gain)
+  gain.connect(context.destination)
+  gain.gain.value = 1
+  videoAmplifier = {
+    context,
+    amplify(multiplier) {
+      gain.gain.value = multiplier
     }
-  result.source.connect(result.gain)
-  result.gain.connect(context.destination)
-  result.amplify(1)
-  return result
-})
+  }
+  return videoAmplifier
+}
 
 const isMuted = ref(false)
 
@@ -219,23 +285,31 @@ const convertVolume = (volume) => {
   return 100 + (volume - 100) * 2
 }
 
-const reverseVolume = (volume) => {
-  if (volume <= 100) return volume
-  return 100 + (volume - 100) / 2
-}
-
 const setVolume = () => {
+  if (!videoRef.value) return
+
   if (Math.round(volume.value) === 0) {
     videoRef.value.muted = true
-    updatePlayerStatus()
+    localStorage.setItem('player_volume', volume.value)
+    syncMuteState()
     return
   }
 
   videoRef.value.muted = false
-  videoAmplifier.value?.context.resume()
-  videoAmplifier.value?.amplify(convertVolume(volume.value) / 100)
+
+  if (volume.value <= 100 && !videoAmplifier) {
+    // Native path: no MediaElementSource until boost is needed.
+    videoRef.value.volume = Math.min(volume.value / 100, 1)
+  } else {
+    // Once created, keep using gain with video.volume = 1.
+    const amp = ensureAmplifier()
+    videoRef.value.volume = 1
+    amp?.context.resume()
+    amp?.amplify(convertVolume(volume.value) / 100)
+  }
+
   localStorage.setItem('player_volume', volume.value)
-  updatePlayerStatus()
+  syncMuteState()
 }
 
 const volumeUp = () => {
@@ -267,8 +341,8 @@ const resetVolume = () => {
 
 const toggleMute = (showAction = false) => {
   videoRef.value.muted = !videoRef.value.muted
-  videoAmplifier.value?.context.resume()
-  updatePlayerStatus()
+  videoAmplifier?.context.resume()
+  syncMuteState()
   if (showAction === true) {
     actionSnackBarRef.value?.emitSnackbar(videoRef.value.muted ? 'volumeMute' : 'volumeUnmute')
   }
@@ -284,13 +358,18 @@ const isDropdownVisible = () =>
   shareDropdown.value?.classList.contains('is-visible')
 
 // Handle show / (auto) hide UI
-const autoHideTimer = ref(null)
-const isPlayerHidden = () => overlayVideoRef.value?.classList.contains('auto-hidden') ?? false
+// Track last activity and use a single timeout instead of clear+set on every pointermove.
+let autoHideTimerId = null
+let lastActivityAt = 0
+let autoHideDelayMs = 1000
+// Plain flag (not ref): hot path for timeupdate early-exit; keep in sync with auto-hidden class.
+let controlsVisible = true
+const isPlayerHidden = () => !controlsVisible
 
 const resetAutoHideTimer = () => {
-  if (autoHideTimer.value) {
-    clearTimeout(autoHideTimer.value)
-    autoHideTimer.value = null
+  if (autoHideTimerId) {
+    clearTimeout(autoHideTimerId)
+    autoHideTimerId = null
   }
 }
 
@@ -298,19 +377,31 @@ const hideUI = () => {
   // Skip if dropdown is visible
   if (isDropdownVisible()) return
 
-  resetAutoHideTimer()
+  const idleFor = Date.now() - lastActivityAt
+  if (idleFor < autoHideDelayMs) {
+    autoHideTimerId = setTimeout(hideUI, autoHideDelayMs - idleFor)
+    return
+  }
 
+  resetAutoHideTimer()
+  controlsVisible = false
   overlayVideoRef.value?.classList.add('auto-hidden')
 }
 
 const showUIAndResetAutoHideTimer = (isTouchEvent = false) => {
-  resetAutoHideTimer()
+  lastActivityAt = Date.now()
+  autoHideDelayMs = (isTouchEvent ? 2 : 1) * 1000
 
-  // set timeout to wait of idle time
-  const t = setTimeout(hideUI, (isTouchEvent ? 2 : 1) * 1000)
-  autoHideTimer.value = t
-
+  const wasHidden = !controlsVisible
+  controlsVisible = true
   overlayVideoRef.value?.classList.remove('auto-hidden')
+  // Catch up progress bar / second-resolution currentTime after idle skip.
+  if (wasHidden) syncCurrentTime()
+
+  // Only schedule hide when no timer is already pending (pointermove no longer thrashs timers).
+  if (!autoHideTimerId) {
+    autoHideTimerId = setTimeout(hideUI, autoHideDelayMs)
+  }
 }
 
 const handlePlayerPointerEvent = (event) => {
@@ -495,6 +586,7 @@ watch(
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeyDown)
+  document.addEventListener('fullscreenchange', syncFullscreen)
   if (isNaN(volume.value)) {
     resetVolume()
   }
@@ -503,6 +595,11 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeyDown)
+  document.removeEventListener('fullscreenchange', syncFullscreen)
+  if (videoAmplifier) {
+    videoAmplifier.context.close().catch(() => {})
+    videoAmplifier = null
+  }
 })
 </script>
 
@@ -517,8 +614,13 @@ onUnmounted(() => {
       id="mediaPlayer"
       ref="videoRef"
       crossorigin="anonymous"
-      @timeupdate="updatePlayerStatus"
-      @seeking="updatePlayerStatus"
+      @timeupdate="syncCurrentTime"
+      @seeking="syncCurrentTime"
+      @durationchange="syncDuration"
+      @play="syncPlayState"
+      @pause="syncPlayState"
+      @volumechange="syncMuteState"
+      @ratechange="syncPlaybackRate"
       @pointerup="handlePlayerClick"
       @loadstart="isBuffering = true"
       @loadeddata="handlePlayerLoaded"
@@ -573,7 +675,7 @@ onUnmounted(() => {
               <button
                 class="button has-flex-center"
                 data-dropdown="share"
-                @pointerup="onPlayerPointerMove"
+                @pointerup="handlePlayerPointerEvent"
               >
                 <span class="ts-icon is-share-nodes-icon" />
               </button>
@@ -606,12 +708,13 @@ onUnmounted(() => {
       <div class="ts-content" style="color: #fff">
         <input
           v-if="!touchMode"
+          ref="progressRangeDesktopRef"
           type="range"
           class="has-full-width has-cursor-pointer player-slider"
-          v-model="currentTime"
           :max="duration"
           step="any"
-          @input="debounceSeekDrag"
+          value="0"
+          @input="handleSeekInput"
         />
         <div class="is-flex justify-between" :class="{ 'has-horizontally-padded': !touchMode }">
           <div class="is-flex">
@@ -635,7 +738,7 @@ onUnmounted(() => {
               @update:volume="setVolume"
             />
             <span>
-              {{ timeText }}
+              <span ref="timeTextRef">00:00:00</span>
               <span v-if="!isNaN(duration)"> / {{ durationText }} </span>
             </span>
           </div>
@@ -720,12 +823,13 @@ onUnmounted(() => {
         </div>
         <input
           v-if="touchMode"
+          ref="progressRangeTouchRef"
           type="range"
           class="has-full-width has-cursor-pointer player-slider"
-          v-model="currentTime"
           :max="duration"
           step="any"
-          @input="debounceSeekDrag"
+          value="0"
+          @input="handleSeekInput"
         />
       </div>
     </div>
@@ -736,7 +840,10 @@ onUnmounted(() => {
 /* Auto Hide */
 .is-hidable {
   opacity: 0;
-  transition-duration: 500ms;
+  visibility: hidden;
+  pointer-events: none;
+  transition-property: opacity, visibility;
+  transition-duration: 200ms;
 }
 
 .ts-mask.is-faded.is-top {
@@ -749,6 +856,8 @@ onUnmounted(() => {
 
 #playerContainer:not(.auto-hidden) > .is-hidable {
   opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .auto-hidden,
@@ -785,6 +894,11 @@ onUnmounted(() => {
 
 #playerContainer {
   display: inline-flex;
+}
+
+#mediaPlayer {
+  /* Isolate video on its own compositor layer so chrome repaints hurt less on Firefox. */
+  transform: translateZ(0);
 }
 
 #playerContainer:not(:fullscreen) video {
