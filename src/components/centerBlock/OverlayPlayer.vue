@@ -31,15 +31,6 @@ const props = defineProps({
 })
 defineEmits(['change-quality', 'copy-link', 'copy-time-link'])
 
-// Handle time code
-const restoreTime = () => {
-  if (props.time && !isNaN(props.time)) {
-    const t = Math.max(Math.min(parseInt(props.time), duration.value || Infinity), 0)
-    draggingCurrentTime.value = t
-    setTime()
-  }
-}
-
 // Handle touch mode
 const touchMode = ref(false)
 const isTouch = (event) => event?.pointerType === 'touch'
@@ -70,11 +61,29 @@ const currentTime = ref(0)
 
 const draggingCurrentTime = ref(undefined)
 
-const duration = ref(0)
+// NaN = unknown (matches HTMLMediaElement.duration before metadata).
+const duration = ref(NaN)
 
 const durationText = computed(() => timeToText(duration.value))
 
 const playbackRate = ref(1)
+
+/** Clamp to [0, duration] when duration is finite; no upper bound for NaN/Infinity. */
+const clampTime = (t) => {
+  let x = Math.max(0, Number(t) || 0)
+  if (Number.isFinite(duration.value)) {
+    x = Math.min(x, duration.value)
+  }
+  return x
+}
+
+// Handle time code
+const restoreTime = () => {
+  if (props.time && !isNaN(props.time)) {
+    draggingCurrentTime.value = clampTime(parseInt(props.time, 10))
+    setTime()
+  }
+}
 
 const writeProgressDom = (t) => {
   const value = String(t)
@@ -101,7 +110,8 @@ const syncCurrentTime = () => {
 }
 
 const syncDuration = () => {
-  duration.value = videoRef.value?.duration ?? 0
+  // Preserve NaN / Infinity / finite seconds from the media element.
+  duration.value = videoRef.value?.duration ?? NaN
 }
 
 const syncPlayState = () => {
@@ -205,14 +215,14 @@ const handleSeekInput = (event) => {
 
 const seekForward = () => {
   const base = videoRef.value?.currentTime ?? currentTime.value
-  draggingCurrentTime.value = Math.min(base + 5, duration.value || Infinity)
+  draggingCurrentTime.value = clampTime(base + 5)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('forward')
 }
 
 const seekBackward = () => {
   const base = videoRef.value?.currentTime ?? currentTime.value
-  draggingCurrentTime.value = Math.max(base - 5, 0)
+  draggingCurrentTime.value = clampTime(base - 5)
   setTime()
   actionSnackBarRef.value?.emitSnackbar('backward')
 }
