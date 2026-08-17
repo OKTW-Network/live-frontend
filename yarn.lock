@@ -1221,6 +1221,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"hls.js@npm:1.6.16":
+  version: 1.6.16
+  resolution: "hls.js@npm:1.6.16"
+  checksum: 10c0/dedf0255fdea857f29e46caab990b2bbdfde9410e64932466e03fc95018238b94486ce57e4b6a96aa4d0e8f9fd26c877e3905951f900fd58437f5eab2b284722
+  languageName: node
+  linkType: hard
+
 "http-cache-semantics@npm:^4.1.1":
   version: 4.1.1
   resolution: "http-cache-semantics@npm:4.1.1"
@@ -1432,6 +1439,7 @@ __metadata:
     "@vue/eslint-config-prettier": "npm:^8.0.0"
     eslint: "npm:^8.57.1"
     eslint-plugin-vue: "npm:^9.32.0"
+    hls.js: "npm:1.6.16"
     lodash: "npm:^4.17.21"
     prettier: "npm:^3.4.2"
     vite: "npm:^4.5.5"
