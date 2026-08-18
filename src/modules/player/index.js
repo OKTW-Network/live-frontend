@@ -1,7 +1,7 @@
 /**
  * @typedef {Object} PlayerMedia
  * @property {string} src Media source URL.
- * @property {'live' | 'recording'} kind Media playback kind.
+ * @property {'live' | 'recording'} kind Playback type.
  * @property {string} title Display title.
  * @property {Date} [publishedAt] Recording publication time.
  */
