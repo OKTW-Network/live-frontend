@@ -1,5 +1,4 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
-import Hls from 'hls.js/dist/hls.light.mjs'
 
 const HLS_MIME_TYPE = 'application/vnd.apple.mpegurl'
 
@@ -37,11 +36,12 @@ export const useHlsPlayback = (videoRef, mediaRef) => {
   const initHls = () => {
     const video = videoRef.value
     const media = mediaRef.value
+    const Hls = window.Hls
     if (!video || media?.kind !== 'live') return
 
     isError.value = false
 
-    if (Hls.isSupported()) {
+    if (Hls?.isSupported()) {
       const engine = new Hls({
         liveSyncDurationCount: 0,
         fetchSetup: (context) => new Request(context.url)
