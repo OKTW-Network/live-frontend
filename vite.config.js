@@ -17,7 +17,7 @@ export default defineConfig({
           directory: './dist',
           not_found_handling: 'single-page-application',
           binding: 'ASSETS',
-          run_worker_first: ['/*'],
+          run_worker_first: true,
         },
       },
     }),
