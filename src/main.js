@@ -247,7 +247,7 @@ function registerApp(Alpine) {
     leaveMedia() {
       this.stopHomeProbes();
       this.player?.cleanup();
-      this.chatClient?.disconnect();
+      Alpine.raw(this.chatClient)?.disconnect();
       this.chatClient = null;
       this.chatState = 'closed';
       this.chatMessages = [];
@@ -294,7 +294,7 @@ function registerApp(Alpine) {
     },
 
     connectChat(channel) {
-      this.chatClient = new ChatClient({
+      const client = new ChatClient({
         onState: (state) => { this.chatState = state; },
         onViewerCount: (count) => { this.chatViewerCount = count; },
         onMessages: (messages) => {
@@ -304,17 +304,18 @@ function registerApp(Alpine) {
           if (shouldStick) Alpine.nextTick(() => list?.scrollTo({ top: list.scrollHeight, behavior: 'smooth' }));
         },
       });
-      this.chatClient.connect(channel, this.nickname);
+      client.connect(channel, this.nickname);
+      this.chatClient = client;
     },
 
     saveNickname() {
       this.nickname = this.nickname.trim() || 'anonymous';
       localStorage.setItem('config_nickname', this.nickname);
-      this.chatClient?.setNickname(this.nickname);
+      Alpine.raw(this.chatClient)?.setNickname(this.nickname);
     },
 
     sendChat() {
-      if (this.chatClient?.sendMessage(this.chatDraft)) this.chatDraft = '';
+      if (Alpine.raw(this.chatClient)?.sendMessage(this.chatDraft)) this.chatDraft = '';
     },
 
     retryPlayer() {

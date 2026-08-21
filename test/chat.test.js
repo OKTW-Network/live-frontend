@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ChatClient, MAX_MESSAGES } from '../src/chat.js';
+import { ChatClient, MAX_MESSAGES, chatServerUrl } from '../src/chat.js';
 
 class FakeSocket {
   static instances = [];
@@ -37,6 +37,14 @@ class FakeSocket {
     this.emit('close', { code: 1000 });
   }
 }
+
+test('uses the Vite reverse proxy for local WebSocket testing', () => {
+  assert.equal(chatServerUrl({
+    useProxy: true,
+    locationImpl: { protocol: 'http:', host: 'localhost:5173' },
+  }), 'ws://localhost:5173/__upstream/ws');
+  assert.equal(chatServerUrl({ useProxy: false }), 'wss://live.oktw.one/ws');
+});
 
 test('sets nickname before joining the selected channel', () => {
   FakeSocket.instances = [];

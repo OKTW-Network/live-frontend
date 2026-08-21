@@ -1,11 +1,20 @@
 const MAX_MESSAGES = 200;
 
+export function chatServerUrl({
+  useProxy = import.meta.env?.DEV === true,
+  locationImpl = globalThis.location,
+} = {}) {
+  if (!useProxy || !locationImpl) return 'wss://live.oktw.one/ws';
+  const protocol = locationImpl.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${locationImpl.host}/__upstream/ws`;
+}
+
 export class ChatClient {
   constructor({
-    server = 'wss://live.oktw.one/ws',
+    server = chatServerUrl(),
     WebSocketImpl = globalThis.WebSocket,
-    setTimer = setTimeout,
-    clearTimer = clearTimeout,
+    setTimer = (callback, delay) => globalThis.setTimeout(callback, delay),
+    clearTimer = (timer) => globalThis.clearTimeout(timer),
     onState = () => {},
     onViewerCount = () => {},
     onMessages = () => {},

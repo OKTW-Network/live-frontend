@@ -1,4 +1,6 @@
-export const API_BASE = 'https://live.oktw.one';
+const useDevelopmentProxy = import.meta.env?.DEV === true;
+
+export const API_BASE = useDevelopmentProxy ? '/__upstream' : 'https://live.oktw.one';
 export const RECORD_LIST_URL = `${API_BASE}/record/list.json`;
 export const PAGE_SIZE = 24;
 
