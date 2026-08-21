@@ -4,10 +4,10 @@ import { ref, onMounted, watch, computed } from 'vue'
 import HeaderBlock from './components/sidebar/HeaderBlock.vue'
 import StreamerList from './components/sidebar/StreamerList.vue'
 import PlaylistView from './components/centerBlock/PlaylistView.vue'
-import MediaPlayer from './components/centerBlock/MediaPlayer.vue'
 import ChatView from './components/chatroom/ChatView.vue'
 import ErrorBlankSlate from './components/ErrorBlankSlate.vue'
 import AgeRestrictPage from './components/AgeRestrictPage.vue'
+import { Player } from './modules/player'
 
 import { useViewport } from './util/viewport'
 import { useChat } from './util/chat'
@@ -60,6 +60,18 @@ const isMobile = computed(() => viewWidth.value <= 1023)
 const mediaList = computed(() =>
   recordList.value.concat(livestreamList.value.filter((i) => i.isLive))
 )
+
+const selectedMedia = computed(() => {
+  const resource = mediaList.value.find((item) => item.name === targetFilename.value)
+  if (!resource) return null
+
+  return {
+    src: resource.src,
+    kind: resource.isLive ? 'live' : 'recording',
+    title: resource.streamer,
+    ...(resource.isLive ? {} : { publishedAt: resource.publishTime })
+  }
+})
 
 const refreshChat = () => {
   if (!isProfilePage.value) {
@@ -151,7 +163,14 @@ const scrollToTop = () => {
 }
 
 // handle time code
-const time = ref(getParameter('t'))
+const parseStartTime = (value) => {
+  if (value === null || value === undefined || value === '') return undefined
+
+  const seconds = Number(value)
+  return Number.isFinite(seconds) ? Math.max(0, Math.trunc(seconds)) : undefined
+}
+
+const startTime = ref(parseStartTime(getParameter('t')))
 
 const copyVideoLink = () => {
   const newUrl = getUrlWithoutParameters()
@@ -170,7 +189,7 @@ watch(
       mobileMenuRef.value?.classList.remove('is-visible')
     scrollToTop()
     refreshChat()
-    time.value = getParameter('t')
+    startTime.value = parseStartTime(getParameter('t'))
     detectNewStreamer()
   }
 )
@@ -223,13 +242,16 @@ const onDrawerBackgroundClick = (event) => {
           </div>
         </div>
         <div ref="playlistRef" class="cell ts-app-layout is-vertical is-fluid is-scrollable">
-          <!-- MediaPlayer -->
-          <div v-if="!isProfilePage" class="cell" style="display: inline-flex; background-color: black;">
-            <MediaPlayer
-              v-if="livestreamList"
-              :filename="targetFilename"
-              :list="mediaList"
-              :time="time"
+          <!-- Player -->
+          <div
+            v-if="!isProfilePage"
+            class="cell"
+            style="display: inline-flex; background-color: black"
+          >
+            <Player
+              :key="selectedMedia?.kind === 'live' ? 'live' : 'recording'"
+              :media="selectedMedia"
+              :start-time="startTime"
               @copy-link="copyVideoLink"
               @copy-time-link="copyTimeLink"
             />

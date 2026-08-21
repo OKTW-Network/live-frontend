@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 
+defineOptions({ name: 'PlayerActionSnackBar' })
+
 const types = {
   play: {
     icon: 'play',
@@ -72,7 +74,11 @@ defineExpose({ emitSnackbar })
 </script>
 
 <template>
-  <div id="actionSnackBar" class="has-pointer-events-none" :class="[additionalClass, { 'has-hidden': isSnackBarHidden }]">
+  <div
+    id="actionSnackBar"
+    class="has-pointer-events-none"
+    :class="[additionalClass, { 'has-hidden': isSnackBarHidden }]"
+  >
     <div class="ts-snackbar">
       <div class="content">
         <span class="ts-icon" :class="[`is-${icon}-icon`]" />

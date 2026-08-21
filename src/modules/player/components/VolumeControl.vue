@@ -1,4 +1,6 @@
 <script setup>
+defineOptions({ name: 'PlayerVolumeControl' })
+
 defineProps({
   volume: {
     type: Number,

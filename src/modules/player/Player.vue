@@ -1,35 +1,26 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, toRef, watch } from 'vue'
 import { debounce } from 'lodash'
 
-import VolumeControl from './OverlayPlayer/VolumeControl.vue'
-import ActionSnackbar from './OverlayPlayer/ActionSnackBar.vue'
-import ErrorBlankSlate from '../ErrorBlankSlate.vue'
+import VolumeControl from './components/VolumeControl.vue'
+import ActionSnackbar from './components/ActionSnackBar.vue'
+import PlayerError from './components/PlayerError.vue'
+import { useHlsPlayback } from './useHlsPlayback'
+
+defineOptions({ name: 'MediaPlayer' })
 
 const props = defineProps({
-  resource: {
+  media: {
     type: Object,
-    required: true
+    default: null
   },
-  qualityList: {
-    type: Array,
-    default: () => []
-  },
-  currentQuality: {
+  startTime: {
     type: Number,
-    default: -1
-  },
-  time: {
-    type: String,
     required: false,
     default: undefined
-  },
-  isError: {
-    type: Boolean,
-    default: false
   }
 })
-defineEmits(['change-quality', 'copy-link', 'copy-time-link'])
+defineEmits(['copy-link', 'copy-time-link'])
 
 // Handle touch mode
 const touchMode = ref(false)
@@ -40,6 +31,11 @@ const actionSnackBarRef = ref(null)
 
 // Handle video element
 const videoRef = ref(null)
+
+const { changeQuality, currentQuality, isError, qualityList } = useHlsPlayback(
+  videoRef,
+  toRef(props, 'media')
+)
 
 const overlayVideoRef = ref(null)
 
@@ -79,8 +75,8 @@ const clampTime = (t) => {
 
 // Handle time code
 const restoreTime = () => {
-  if (props.time && !isNaN(props.time)) {
-    draggingCurrentTime.value = clampTime(parseInt(props.time, 10))
+  if (Number.isFinite(props.startTime)) {
+    draggingCurrentTime.value = clampTime(props.startTime)
     setTime()
   }
 }
@@ -228,7 +224,7 @@ const seekBackward = () => {
 }
 
 const togglePlay = (showAction = false) => {
-  if (!props.resource) return
+  if (!props.media) return
   if (videoRef.value.paused) {
     videoRef.value.play()
   } else {
@@ -241,13 +237,16 @@ const togglePlay = (showAction = false) => {
 }
 
 const toggleFullscreen = () => {
-  if (!props.resource) return
+  if (!props.media) return
   if (!document.fullscreenElement) {
-    overlayVideoRef.value?.requestFullscreen().then(() => {
-      screen.orientation.lock('landscape').catch(() => {})
-    }).catch((err) => {
-      console.error(`Error attempting to enable fullscreen mode: ${err.message} (${err.name})`)
-    })
+    overlayVideoRef.value
+      ?.requestFullscreen()
+      .then(() => {
+        screen.orientation.lock('landscape').catch(() => {})
+      })
+      .catch((err) => {
+        console.error(`Error attempting to enable fullscreen mode: ${err.message} (${err.name})`)
+      })
   } else {
     document.exitFullscreen()
     screen.orientation.unlock().catch(() => {})
@@ -526,7 +525,7 @@ const handleKeyDown = (event) => {
   const shouldSkip =
     document.activeElement instanceof HTMLInputElement &&
     !document.activeElement.classList.contains('player-slider')
-  if (shouldSkip || !videoRef.value || !props.resource) {
+  if (shouldSkip || !videoRef.value || !props.media) {
     return
   }
 
@@ -578,7 +577,7 @@ const handleVolumeMouseWheel = (event) => {
 }
 
 watch(
-  () => props.time,
+  () => props.startTime,
   () => {
     restoreTime()
   }
@@ -628,21 +627,17 @@ onUnmounted(() => {
       @playing="handlePlayerPlaying"
       @error="handlePlayerError"
       class="has-full-size"
-      :src="resource?.isLive ? undefined : resource?.src"
+      :src="media?.kind === 'live' ? undefined : media?.src"
     />
 
-    <ErrorBlankSlate v-if="isError || isVideoError" style="position: absolute" />
+    <PlayerError v-if="isError || isVideoError" style="position: absolute" />
     <ActionSnackbar ref="actionSnackBarRef" />
-    <div v-if="isBuffering || !resource" class="ts-mask" @pointerup="handlePlayerClick">
+    <div v-if="isBuffering || !media" class="ts-mask" @pointerup="handlePlayerClick">
       <div class="ts-center">
         <div class="ts-loading is-large" style="color: #fff"></div>
       </div>
     </div>
-    <div
-      v-if="resource && touchMode"
-      id="mobileCenterControl"
-      class="is-hidable has-flex-center"
-    >
+    <div v-if="media && touchMode" id="mobileCenterControl" class="is-hidable has-flex-center">
       <button
         class="button-touch has-flex-center"
         @pointerup="withHandlePointerEvent($event, togglePlay)"
@@ -652,21 +647,21 @@ onUnmounted(() => {
       </button>
     </div>
     <div
-      v-if="resource"
+      v-if="media"
       class="ts-mask is-faded is-top is-hidable"
       @pointerup="handlePlayerPointerEvent"
     >
       <div class="ts-content" style="color: #fff">
         <div class="is-flex justify-between has-horizontally-padded">
           <div id="videoTitle">
-            <div class="ts-header is-truncated">{{ resource.streamer }}</div>
-            <span v-if="resource.isLive">
+            <div class="ts-header is-truncated">{{ media.title }}</div>
+            <span v-if="media.kind === 'live'">
               <span class="ts-icon is-circle-icon" :style="{ color: '#ff4141' }" />
               Live
             </span>
-            <span v-else>
+            <span v-else-if="media.publishedAt">
               {{
-                `${resource.publishTime.toLocaleDateString()} ${resource.publishTime.toLocaleTimeString()}`
+                `${media.publishedAt.toLocaleDateString()} ${media.publishedAt.toLocaleTimeString()}`
               }}
             </span>
           </div>
@@ -687,7 +682,7 @@ onUnmounted(() => {
               >
                 <button class="item" @click="$emit('copy-link')">複製影片連結</button>
                 <button
-                  v-if="!resource.isLive"
+                  v-if="media.kind !== 'live'"
                   class="item"
                   @click="$emit('copy-time-link', currentTime)"
                 >
@@ -701,7 +696,7 @@ onUnmounted(() => {
       </div>
     </div>
     <div
-      v-if="resource"
+      v-if="media"
       class="ts-mask is-faded is-bottom is-hidable"
       @pointerup="handlePlayerPointerEvent"
     >
@@ -771,7 +766,7 @@ onUnmounted(() => {
                 <button
                   class="item"
                   :class="{ 'is-selected': currentQuality === -1 }"
-                  @click="$emit('change-quality', -1)"
+                  @click="changeQuality(-1)"
                 >
                   Auto
                 </button>
@@ -781,7 +776,7 @@ onUnmounted(() => {
                   :key="`quality-${index}`"
                   class="item"
                   :class="{ 'is-selected': currentQuality === index }"
-                  @click="$emit('change-quality', index)"
+                  @click="changeQuality(index)"
                 >
                   {{ quality }}
                 </button>
