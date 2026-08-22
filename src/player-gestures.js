@@ -5,7 +5,6 @@ export const PLAYER_GESTURE_CONFIG = Object.freeze({
   maximumDoubleTapDistance: 48,
   touchSeekSeconds: 10,
   feedbackDuration: 650,
-  controlActivationMaximumAge: 1000,
 });
 
 const BLOCKED_TARGET_SELECTOR = [
@@ -28,83 +27,6 @@ const distance = (first, second) => Math.hypot(first.x - second.x, first.y - sec
 
 export function isPlayerGestureBlockedTarget(target) {
   return Boolean(target?.closest?.(BLOCKED_TARGET_SELECTOR));
-}
-
-export function createPlaybackControlActivationTracker({
-  maximumAge = PLAYER_GESTURE_CONFIG.controlActivationMaximumAge,
-} = {}) {
-  let activation = null;
-
-  function pointerDown(event, control) {
-    if (!['mouse', 'touch'].includes(event?.pointerType) || event?.isPrimary === false) {
-      activation = null;
-      return false;
-    }
-    activation = {
-      control,
-      pointerId: event.pointerId,
-      pointerType: event.pointerType,
-      startedAt: Number(event.timeStamp) || 0,
-    };
-    return true;
-  }
-
-  function pointerCancel(event, control) {
-    if (!activation || activation.control !== control || activation.pointerId !== event?.pointerId) return false;
-    activation = null;
-    return true;
-  }
-
-  function pointerLeave(event, control) {
-    if (Number(event?.buttons) === 0) return false;
-    return pointerCancel(event, control);
-  }
-
-  function consume(event, control) {
-    const current = activation;
-    activation = null;
-    if (!current || current.control !== control || current.pointerType !== 'touch') return false;
-    if (Number(event?.detail) === 0) return false;
-    const elapsed = (Number(event?.timeStamp) || 0) - current.startedAt;
-    return elapsed >= 0 && elapsed <= maximumAge;
-  }
-
-  function reset() {
-    activation = null;
-  }
-
-  return Object.freeze({ pointerDown, pointerCancel, pointerLeave, consume, reset });
-}
-
-export function createPlayerGestureFeedbackController({
-  duration = PLAYER_GESTURE_CONFIG.feedbackDuration,
-  onChange = () => {},
-  setTimeoutImpl = globalThis.setTimeout,
-  clearTimeoutImpl = globalThis.clearTimeout,
-} = {}) {
-  let sequence = 0;
-  let timer = null;
-
-  function show(feedback) {
-    if (timer !== null) clearTimeoutImpl(timer);
-    const current = { ...feedback, id: ++sequence };
-    onChange(current);
-    timer = setTimeoutImpl(() => {
-      if (current.id !== sequence) return;
-      timer = null;
-      onChange(null);
-    }, duration);
-    return current;
-  }
-
-  function clear() {
-    if (timer !== null) clearTimeoutImpl(timer);
-    timer = null;
-    sequence += 1;
-    onChange(null);
-  }
-
-  return Object.freeze({ show, clear });
 }
 
 export function createPlaybackToggleCoordinator({

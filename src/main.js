@@ -1,8 +1,6 @@
 import { ChatClient } from './chat.js';
 import {
   PLAYER_GESTURE_CONFIG,
-  createPlaybackControlActivationTracker,
-  createPlayerGestureFeedbackController,
   createPlaybackToggleCoordinator,
   createPlayerGestureRecognizer,
   isPlayerGestureBlockedTarget,
@@ -17,8 +15,6 @@ import {
   formatBytes,
   formatDate,
   formatDuration,
-  formatShortDate,
-  mapWithConcurrency,
   metadataForPath,
   nextThumbnailExtension,
   normalizeRecords,
@@ -136,8 +132,7 @@ function registerApp(Alpine) {
     playerGestures: null,
     playerControlsVisible: true,
     playerGestureFeedback: null,
-    playerGestureFeedbackController: null,
-    playerPlaybackControlActivation: null,
+    playerGestureFeedbackTimer: null,
     playerPlaybackCoordinator: null,
     playerHelpOpen: false,
     settingsOpen: false,
@@ -180,21 +175,21 @@ function registerApp(Alpine) {
           if (this.debugOpen) this.refreshDebug();
         },
       });
-      this.playerPlaybackControlActivation = createPlaybackControlActivationTracker();
-      this.playerGestureFeedbackController = createPlayerGestureFeedbackController({
-        onChange: (feedback) => { this.playerGestureFeedback = feedback; },
-      });
       this.playerPlaybackCoordinator = createPlaybackToggleCoordinator({
         getPlayer: () => this.player,
         getSnapshot: () => this.playerSnapshot,
         getMediaKey: () => this.activeMediaKey,
-        onFeedback: (action) => this.showPlayerPlaybackFeedback(action),
+        onFeedback: (action) => this.showPlayerGestureFeedback({
+          type: 'playback',
+          action,
+          label: action === 'play' ? '開始播放' : '已暫停',
+        }),
       });
       this.playerGestures = createPlayerGestureRecognizer({
         onMouseSingle: () => {
           if (!this.activeMediaKey) return;
           this.playerControlsVisible = true;
-          this.togglePlaybackWithFeedback();
+          this.togglePlayback({ showFeedback: true });
         },
         onMouseDouble: () => {
           if (!this.activeMediaKey) return;
@@ -209,7 +204,13 @@ function registerApp(Alpine) {
           if (!this.activeMediaKey || !this.playerSnapshot.canSeek) return false;
           const delta = zone === 'left' ? -PLAYER_GESTURE_CONFIG.touchSeekSeconds : PLAYER_GESTURE_CONFIG.touchSeekSeconds;
           const handled = this.player?.seek(this.playerSnapshot.currentTime + delta) === true;
-          if (handled) this.showPlayerSeekFeedback(zone, delta);
+          if (handled) {
+            this.showPlayerGestureFeedback({
+              type: 'seek',
+              direction: zone,
+              label: delta < 0 ? `倒退 ${Math.abs(delta)} 秒` : `快進 ${delta} 秒`,
+            });
+          }
           return handled;
         },
       });
@@ -463,10 +464,10 @@ function registerApp(Alpine) {
       });
       if (hasNewStreamer) this.liveStatuses = pendingStatuses;
 
-      const results = await mapWithConcurrency(this.streamers, 3, async (streamer) => ({
+      const results = await Promise.all(this.streamers.map(async (streamer) => ({
         name: streamer.name,
         status: await probeLive(streamer.name) ? 'online' : 'offline',
-      }));
+      })));
       if (run !== this.probeRun || this.view !== 'home') return;
 
       const nextStatuses = { ...this.liveStatuses };
@@ -518,7 +519,6 @@ function registerApp(Alpine) {
     deactivateMedia() {
       if (this.activeMediaKey || this.playerSnapshot.playerState !== 'idle') this.player?.cleanup();
       Alpine.raw(this.playerGestures)?.reset();
-      Alpine.raw(this.playerPlaybackControlActivation)?.reset();
       Alpine.raw(this.playerPlaybackCoordinator)?.cancel();
       this.clearPlayerGestureFeedback();
       this.closePlayerHelp(false);
@@ -566,38 +566,8 @@ function registerApp(Alpine) {
       await this.player?.retry();
     },
 
-    async performPlaybackToggle({ showFeedback = false, forcePlay = false } = {}) {
+    togglePlayback({ showFeedback = false, forcePlay = false } = {}) {
       return Alpine.raw(this.playerPlaybackCoordinator)?.toggle({ showFeedback, forcePlay }) ?? false;
-    },
-
-    togglePlayback() {
-      return this.performPlaybackToggle();
-    },
-
-    togglePlaybackWithFeedback() {
-      return this.performPlaybackToggle({ showFeedback: true });
-    },
-
-    handlePlaybackControlPointerDown(event, control) {
-      Alpine.raw(this.playerPlaybackControlActivation)?.pointerDown(event, control);
-    },
-
-    handlePlaybackControlPointerCancel(event, control) {
-      Alpine.raw(this.playerPlaybackControlActivation)?.pointerCancel(event, control);
-    },
-
-    handlePlaybackControlPointerLeave(event, control) {
-      Alpine.raw(this.playerPlaybackControlActivation)?.pointerLeave(event, control);
-    },
-
-    togglePlaybackFromControl(event, control) {
-      const showFeedback = Alpine.raw(this.playerPlaybackControlActivation)?.consume(event, control) === true;
-      return this.performPlaybackToggle({ showFeedback });
-    },
-
-    startPlaybackFromControl(event, control) {
-      const showFeedback = Alpine.raw(this.playerPlaybackControlActivation)?.consume(event, control) === true;
-      return this.performPlaybackToggle({ showFeedback, forcePlay: true });
     },
 
     toggleMute() {
@@ -660,28 +630,19 @@ function registerApp(Alpine) {
       Alpine.raw(this.playerGestures)?.pointerCancel(this.playerGestureEvent(event));
     },
 
-    setPlayerGestureFeedback(feedback) {
-      Alpine.raw(this.playerGestureFeedbackController)?.show(feedback);
-    },
-
-    showPlayerSeekFeedback(direction, delta) {
-      this.setPlayerGestureFeedback({
-        type: 'seek',
-        direction,
-        label: delta < 0 ? `倒退 ${Math.abs(delta)} 秒` : `快進 ${delta} 秒`,
-      });
-    },
-
-    showPlayerPlaybackFeedback(action) {
-      this.setPlayerGestureFeedback({
-        type: 'playback',
-        action,
-        label: action === 'play' ? '開始播放' : '已暫停',
-      });
+    showPlayerGestureFeedback(feedback) {
+      clearTimeout(this.playerGestureFeedbackTimer);
+      const current = { ...feedback, id: Date.now() };
+      this.playerGestureFeedback = current;
+      this.playerGestureFeedbackTimer = setTimeout(() => {
+        if (this.playerGestureFeedback?.id === current.id) this.playerGestureFeedback = null;
+      }, PLAYER_GESTURE_CONFIG.feedbackDuration);
     },
 
     clearPlayerGestureFeedback() {
-      Alpine.raw(this.playerGestureFeedbackController)?.clear();
+      clearTimeout(this.playerGestureFeedbackTimer);
+      this.playerGestureFeedbackTimer = null;
+      this.playerGestureFeedback = null;
     },
 
     toggleShare() {
@@ -827,13 +788,12 @@ function registerApp(Alpine) {
       try { return JSON.stringify(entry.payload); } catch { return '[Unserializable]'; }
     },
 
-    formatPlayerRanges(ranges) {
-      if (!ranges?.length) return '—';
-      return ranges.map(({ start, end }) => `${start.toFixed(2)}–${end.toFixed(2)}`).join(', ');
-    },
-
-    formatPlayerValue(value) {
+    fmt(value) {
       if (value === null || value === undefined || value === '') return '—';
+      if (Array.isArray(value)) {
+        if (!value.length) return '—';
+        return value.map(({ start, end }) => `${start.toFixed(2)}–${end.toFixed(2)}`).join(', ');
+      }
       if (typeof value === 'object') {
         try { return JSON.stringify(value); } catch { return '[Unserializable]'; }
       }
@@ -845,12 +805,9 @@ function registerApp(Alpine) {
       this.deactivateMedia();
       Alpine.raw(this.playerGestures)?.destroy();
       this.playerGestures = null;
-      Alpine.raw(this.playerPlaybackControlActivation)?.reset();
-      this.playerPlaybackControlActivation = null;
       Alpine.raw(this.playerPlaybackCoordinator)?.cancel();
       this.playerPlaybackCoordinator = null;
-      Alpine.raw(this.playerGestureFeedbackController)?.clear();
-      this.playerGestureFeedbackController = null;
+      this.clearPlayerGestureFeedback();
       this.player?.destroy();
       document.removeEventListener('click', this.navigationHandler);
       document.removeEventListener('visibilitychange', this.visibilityHandler);
@@ -883,7 +840,6 @@ function registerApp(Alpine) {
     streamerPath,
     recordPath,
     formatDate,
-    formatShortDate,
     formatDuration,
     formatBytes,
 

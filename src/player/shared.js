@@ -6,10 +6,8 @@ export const STORAGE_KEYS = Object.freeze({
 });
 
 export const MEDIA_EVENTS = Object.freeze([
-  'abort', 'canplay', 'canplaythrough', 'durationchange', 'emptied', 'encrypted', 'ended', 'error',
-  'loadeddata', 'loadedmetadata', 'loadstart', 'pause', 'play', 'playing', 'progress', 'ratechange',
-  'seeked', 'seeking', 'stalled', 'suspend', 'timeupdate', 'volumechange', 'waiting', 'waitingforkey',
-  'enterpictureinpicture', 'leavepictureinpicture',
+  'loadedmetadata', 'playing', 'pause', 'waiting', 'stalled', 'canplay', 'ended', 'error',
+  'ratechange', 'seeked', 'volumechange', 'enterpictureinpicture', 'leavepictureinpicture',
 ]);
 
 export const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
@@ -54,12 +52,6 @@ export function latestRangeEnd(ranges) {
 export function forwardBufferFor(ranges, currentTime) {
   const range = ranges.find(({ start, end }) => currentTime >= start - 0.05 && currentTime <= end + 0.05);
   return range ? Math.max(0, range.end - currentTime) : 0;
-}
-
-export function freezeSnapshot(value) {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  Object.values(value).forEach(freezeSnapshot);
-  return Object.freeze(value);
 }
 
 export function defaultMessage(state) {

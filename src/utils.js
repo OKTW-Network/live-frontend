@@ -127,21 +127,9 @@ const fullDateFormatter = new Intl.DateTimeFormat('zh-TW-u-ca-gregory', {
   hourCycle: 'h23',
 });
 
-const shortDateFormatter = new Intl.DateTimeFormat('zh-TW-u-ca-gregory', {
-  timeZone: 'Asia/Taipei',
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-});
-
 export function formatDate(timestamp) {
   const value = Number(timestamp);
   return Number.isFinite(value) ? fullDateFormatter.format(new Date(value * 1000)) : '—';
-}
-
-export function formatShortDate(timestamp) {
-  const value = Number(timestamp);
-  return Number.isFinite(value) ? shortDateFormatter.format(new Date(value * 1000)) : '—';
 }
 
 export function formatDuration(seconds) {
@@ -164,10 +152,6 @@ export function formatBytes(bytes) {
   return `${new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 2 }).format(size)} ${units[unitIndex]}`;
 }
 
-export function encodePathSegment(value) {
-  return encodeURIComponent(value);
-}
-
 export function decodePathSegment(value) {
   try {
     return decodeURIComponent(value);
@@ -177,11 +161,11 @@ export function decodePathSegment(value) {
 }
 
 export function streamerPath(streamer) {
-  return `/@${encodePathSegment(streamer)}`;
+  return `/@${encodeURIComponent(streamer)}`;
 }
 
 export function recordPath(filename) {
-  return `/record/${encodePathSegment(filename)}`;
+  return `/record/${encodeURIComponent(filename)}`;
 }
 
 export function parseRoute(pathname = '/') {
@@ -204,16 +188,16 @@ export function parseRoute(pathname = '/') {
 }
 
 export function liveUrl(streamer) {
-  return `${API_BASE}/live/${encodePathSegment(streamer)}.m3u8`;
+  return `${API_BASE}/live/${encodeURIComponent(streamer)}.m3u8`;
 }
 
 export function recordUrl(filename) {
-  return `${API_BASE}/record/${encodePathSegment(filename)}`;
+  return `${API_BASE}/record/${encodeURIComponent(filename)}`;
 }
 
 export function thumbnailUrl(filename, extension = 'jxl') {
   const basename = String(filename).replace(/\.[^.]+$/, '');
-  return `${API_BASE}/record/${encodePathSegment(basename)}.${extension}`;
+  return `${API_BASE}/record/${encodeURIComponent(basename)}.${extension}`;
 }
 
 export function nextThumbnailExtension(extension) {
@@ -235,20 +219,6 @@ export async function probeLive(streamer, { fetchImpl = fetch, timeoutMs = 5000 
   } finally {
     clearTimeout(timer);
   }
-}
-
-export async function mapWithConcurrency(items, concurrency, worker) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const runners = Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await worker(items[index], index);
-    }
-  });
-  await Promise.all(runners);
-  return results;
 }
 
 export function metadataForPath(pathname) {
