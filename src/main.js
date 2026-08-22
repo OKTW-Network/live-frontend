@@ -1,4 +1,12 @@
 import { ChatClient } from './chat.js';
+import {
+  PLAYER_GESTURE_CONFIG,
+  createPlaybackControlActivationTracker,
+  createPlayerGestureFeedbackController,
+  createPlaybackToggleCoordinator,
+  createPlayerGestureRecognizer,
+  isPlayerGestureBlockedTarget,
+} from './player-gestures.js';
 import { createPlayerController, PLAYER_RATES } from './player.js';
 import {
   PAGE_SIZE,
@@ -125,6 +133,13 @@ function registerApp(Alpine) {
       capabilities: { boost: false, pictureInPicture: false, fullscreen: false, share: false },
     },
     playerRates: PLAYER_RATES,
+    playerGestures: null,
+    playerControlsVisible: true,
+    playerGestureFeedback: null,
+    playerGestureFeedbackController: null,
+    playerPlaybackControlActivation: null,
+    playerPlaybackCoordinator: null,
+    playerHelpOpen: false,
     settingsOpen: false,
     shareOpen: false,
     shareIncludeTime: true,
@@ -163,6 +178,39 @@ function registerApp(Alpine) {
         onDebug: ({ count }) => {
           this.debugCount = count;
           if (this.debugOpen) this.refreshDebug();
+        },
+      });
+      this.playerPlaybackControlActivation = createPlaybackControlActivationTracker();
+      this.playerGestureFeedbackController = createPlayerGestureFeedbackController({
+        onChange: (feedback) => { this.playerGestureFeedback = feedback; },
+      });
+      this.playerPlaybackCoordinator = createPlaybackToggleCoordinator({
+        getPlayer: () => this.player,
+        getSnapshot: () => this.playerSnapshot,
+        getMediaKey: () => this.activeMediaKey,
+        onFeedback: (action) => this.showPlayerPlaybackFeedback(action),
+      });
+      this.playerGestures = createPlayerGestureRecognizer({
+        onMouseSingle: () => {
+          if (!this.activeMediaKey) return;
+          this.playerControlsVisible = true;
+          this.togglePlaybackWithFeedback();
+        },
+        onMouseDouble: () => {
+          if (!this.activeMediaKey) return;
+          this.playerControlsVisible = true;
+          this.player?.toggleFullscreen();
+        },
+        onTouchSingle: () => {
+          if (!this.activeMediaKey) return;
+          this.playerControlsVisible = !this.playerControlsVisible;
+        },
+        onTouchDouble: ({ zone }) => {
+          if (!this.activeMediaKey || !this.playerSnapshot.canSeek) return false;
+          const delta = zone === 'left' ? -PLAYER_GESTURE_CONFIG.touchSeekSeconds : PLAYER_GESTURE_CONFIG.touchSeekSeconds;
+          const handled = this.player?.seek(this.playerSnapshot.currentTime + delta) === true;
+          if (handled) this.showPlayerSeekFeedback(zone, delta);
+          return handled;
         },
       });
 
@@ -469,6 +517,11 @@ function registerApp(Alpine) {
 
     deactivateMedia() {
       if (this.activeMediaKey || this.playerSnapshot.playerState !== 'idle') this.player?.cleanup();
+      Alpine.raw(this.playerGestures)?.reset();
+      Alpine.raw(this.playerPlaybackControlActivation)?.reset();
+      Alpine.raw(this.playerPlaybackCoordinator)?.cancel();
+      this.clearPlayerGestureFeedback();
+      this.closePlayerHelp(false);
       Alpine.raw(this.chatClient)?.disconnect();
       this.activeMediaKey = '';
       this.chatClient = null;
@@ -480,6 +533,7 @@ function registerApp(Alpine) {
       this.shareOpen = false;
       this.debugOpen = false;
       this.debugEntries = [];
+      this.playerControlsVisible = true;
     },
 
     connectChat(channel) {
@@ -512,9 +566,38 @@ function registerApp(Alpine) {
       await this.player?.retry();
     },
 
+    async performPlaybackToggle({ showFeedback = false, forcePlay = false } = {}) {
+      return Alpine.raw(this.playerPlaybackCoordinator)?.toggle({ showFeedback, forcePlay }) ?? false;
+    },
+
     togglePlayback() {
-      if (this.playerSnapshot.paused) this.player?.play();
-      else this.player?.pause();
+      return this.performPlaybackToggle();
+    },
+
+    togglePlaybackWithFeedback() {
+      return this.performPlaybackToggle({ showFeedback: true });
+    },
+
+    handlePlaybackControlPointerDown(event, control) {
+      Alpine.raw(this.playerPlaybackControlActivation)?.pointerDown(event, control);
+    },
+
+    handlePlaybackControlPointerCancel(event, control) {
+      Alpine.raw(this.playerPlaybackControlActivation)?.pointerCancel(event, control);
+    },
+
+    handlePlaybackControlPointerLeave(event, control) {
+      Alpine.raw(this.playerPlaybackControlActivation)?.pointerLeave(event, control);
+    },
+
+    togglePlaybackFromControl(event, control) {
+      const showFeedback = Alpine.raw(this.playerPlaybackControlActivation)?.consume(event, control) === true;
+      return this.performPlaybackToggle({ showFeedback });
+    },
+
+    startPlaybackFromControl(event, control) {
+      const showFeedback = Alpine.raw(this.playerPlaybackControlActivation)?.consume(event, control) === true;
+      return this.performPlaybackToggle({ showFeedback, forcePlay: true });
     },
 
     toggleMute() {
@@ -542,6 +625,65 @@ function registerApp(Alpine) {
       this.player?.seek(Number(event.target.value));
     },
 
+    playerGestureEvent(event) {
+      const shell = event.currentTarget;
+      const rect = shell?.getBoundingClientRect?.();
+      return {
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        button: event.button,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        isPrimary: event.isPrimary,
+        zone: rect && event.clientX < rect.left + rect.width / 2 ? 'left' : 'right',
+      };
+    },
+
+    handlePlayerPointerDown(event) {
+      if (event.pointerType === 'mouse') this.playerControlsVisible = true;
+      if (isPlayerGestureBlockedTarget(event.target)) {
+        Alpine.raw(this.playerGestures)?.pointerCancel({ pointerId: event.pointerId });
+        return;
+      }
+      Alpine.raw(this.playerGestures)?.pointerDown(this.playerGestureEvent(event));
+    },
+
+    handlePlayerPointerMove(event) {
+      Alpine.raw(this.playerGestures)?.pointerMove(this.playerGestureEvent(event));
+    },
+
+    handlePlayerPointerUp(event) {
+      Alpine.raw(this.playerGestures)?.pointerUp(this.playerGestureEvent(event));
+    },
+
+    handlePlayerPointerCancel(event) {
+      Alpine.raw(this.playerGestures)?.pointerCancel(this.playerGestureEvent(event));
+    },
+
+    setPlayerGestureFeedback(feedback) {
+      Alpine.raw(this.playerGestureFeedbackController)?.show(feedback);
+    },
+
+    showPlayerSeekFeedback(direction, delta) {
+      this.setPlayerGestureFeedback({
+        type: 'seek',
+        direction,
+        label: delta < 0 ? `倒退 ${Math.abs(delta)} 秒` : `快進 ${delta} 秒`,
+      });
+    },
+
+    showPlayerPlaybackFeedback(action) {
+      this.setPlayerGestureFeedback({
+        type: 'playback',
+        action,
+        label: action === 'play' ? '開始播放' : '已暫停',
+      });
+    },
+
+    clearPlayerGestureFeedback() {
+      Alpine.raw(this.playerGestureFeedbackController)?.clear();
+    },
+
     toggleShare() {
       this.shareOpen = !this.shareOpen;
       this.settingsOpen = false;
@@ -551,11 +693,46 @@ function registerApp(Alpine) {
     toggleSettings() {
       this.settingsOpen = !this.settingsOpen;
       this.shareOpen = false;
+      this.playerControlsVisible = true;
     },
 
     closePlayerPopovers() {
+      if (this.playerHelpOpen) {
+        this.closePlayerHelp();
+        return;
+      }
       this.settingsOpen = false;
       this.shareOpen = false;
+    },
+
+    openPlayerHelp() {
+      this.playerControlsVisible = true;
+      this.settingsOpen = false;
+      this.shareOpen = false;
+      this.playerHelpOpen = true;
+      Alpine.nextTick(() => {
+        const dialog = this.$refs.playerHelpDialog;
+        if (!dialog || dialog.open) return;
+        if (typeof dialog.showModal === 'function') dialog.showModal();
+        else dialog.setAttribute('open', '');
+      });
+    },
+
+    closePlayerHelp(restoreFocus = true) {
+      const wasOpen = this.playerHelpOpen || this.$refs.playerHelpDialog?.open;
+      this.playerHelpOpen = false;
+      const dialog = this.$refs.playerHelpDialog;
+      if (dialog?.open && typeof dialog.close === 'function') dialog.close();
+      else dialog?.removeAttribute?.('open');
+      if (!wasOpen || !restoreFocus || !this.activeMediaKey) return;
+      Alpine.nextTick(() => {
+        this.settingsOpen = true;
+        Alpine.nextTick(() => this.$refs.playerHelpTrigger?.focus());
+      });
+    },
+
+    handlePlayerHelpClosed() {
+      this.playerHelpOpen = false;
     },
 
     async togglePictureInPicture() {
@@ -666,6 +843,14 @@ function registerApp(Alpine) {
     destroy() {
       this.stopProbes();
       this.deactivateMedia();
+      Alpine.raw(this.playerGestures)?.destroy();
+      this.playerGestures = null;
+      Alpine.raw(this.playerPlaybackControlActivation)?.reset();
+      this.playerPlaybackControlActivation = null;
+      Alpine.raw(this.playerPlaybackCoordinator)?.cancel();
+      this.playerPlaybackCoordinator = null;
+      Alpine.raw(this.playerGestureFeedbackController)?.clear();
+      this.playerGestureFeedbackController = null;
       this.player?.destroy();
       document.removeEventListener('click', this.navigationHandler);
       document.removeEventListener('visibilitychange', this.visibilityHandler);

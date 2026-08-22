@@ -267,5 +267,5 @@ export function metadataForPath(pathname) {
     const match = route.filename.match(filenamePattern);
     if (match) return { title: `${match[1]} 直播紀錄 — OKTW Live`, description: `播放 ${route.filename} 直播紀錄。` };
   }
-  return { title: '找不到頁面 — OKTW Live', description: defaultDescription };
+  return { title: '找不到頁面 — ON Live', description: defaultDescription };
 }

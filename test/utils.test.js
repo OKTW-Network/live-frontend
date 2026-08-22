@@ -151,5 +151,5 @@ test('builds route-specific metadata', () => {
   assert.equal(metadataForPath('/records').title, '直播紀錄 — OKTW Live');
   assert.equal(metadataForPath('/@cute_panda').title, 'cute_panda — OKTW Live');
   assert.equal(metadataForPath('/record/cute_panda-1700000000.mp4').title, 'cute_panda 直播紀錄 — OKTW Live');
-  assert.equal(metadataForPath('/live/cute_panda').title, '找不到頁面 — OKTW Live');
+  assert.equal(metadataForPath('/live/cute_panda').title, '找不到頁面 — ON Live');
 });

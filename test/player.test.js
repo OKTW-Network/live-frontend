@@ -241,6 +241,7 @@ test('exports exactly the eight supported playback rates', () => {
 test('player markup keeps core controls visible and moves secondary actions into settings and title', async () => {
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+  const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /<video[^>]*\scontrols(?:\s|=|>)/i);
   assert.match(html, /id="player-timeline"/);
   assert.match(html, /x-ref="playerContainer"[^>]*class="[^"]*\bplayer-stage\b[^"]*"/);
@@ -248,6 +249,21 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.match(html, /aria-controls="player-settings-panel"/);
   assert.match(html, /aria-controls="player-debug-panel"/);
   assert.match(html, /id="player-debug-panel"/);
+  assert.match(html, /@pointerdown="handlePlayerPointerDown"/);
+  assert.match(html, /@pointermove="handlePlayerPointerMove"/);
+  assert.match(html, /@pointerup="handlePlayerPointerUp"/);
+  assert.match(html, /@pointercancel="handlePlayerPointerCancel"/);
+  assert.doesNotMatch(html, /@dblclick=/);
+  assert.match(html, /player-controls-hidden/);
+  assert.match(html, /playerGestureFeedback/);
+  assert.match(html, /@click="togglePlaybackFromControl\(\$event, 'primary'\)"/);
+  assert.match(html, /@click="startPlaybackFromControl\(\$event, 'autoplay'\)"/);
+  assert.match(html, /handlePlaybackControlPointerDown/);
+  assert.match(html, /player-gesture-feedback-center player-gesture-feedback-playback/);
+  assert.match(html, /feedback\.action === 'play'/);
+  assert.match(html, /feedback\.action === 'pause'/);
+  assert.match(html, /aria-atomic="true"/);
+  assert.match(main, /label: action === 'play' \? '開始播放' : '已暫停'/);
   assert.match(html, /data-heroicon="play"/);
   assert.match(html, /data-heroicon="cog-6-tooth"/);
   assert.match(html, /data-heroicon="chevron-down"/);
@@ -270,6 +286,8 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.match(settingsMarkup, /自動追趕/);
   assert.match(settingsMarkup, /追上直播/);
   assert.match(settingsMarkup, /togglePictureInPicture/);
+  assert.match(settingsMarkup, /x-ref="playerHelpTrigger"/);
+  assert.match(settingsMarkup, />操作說明</);
   assert.match(settingsMarkup, /toggleDebug/);
   assert.match(settingsMarkup, /x-transition:enter/);
   assert.match(settingsMarkup, /class="player-settings-panel w-full border-t/);
@@ -292,6 +310,26 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.doesNotMatch(css, /\.player-settings-grid\s*{[^}]*repeat\(2/s);
   assert.doesNotMatch(css, /\.player-settings-grid[^}]*grid-template-columns:\s*repeat\(2/s);
   assert.doesNotMatch(css, /\.player-settings-panel\s*{[^}]*position:\s*fixed/s);
+  assert.match(html, /<dialog id="player-help-dialog"[^>]*aria-modal="true"/);
+  assert.match(html, /單擊影片畫面[\s\S]*播放／暫停/);
+  assert.match(html, /雙擊影片畫面[\s\S]*進入／離開全螢幕/);
+  assert.match(html, /雙點左側[\s\S]*倒退 10 秒/);
+  assert.match(html, /雙點右側[\s\S]*快進 10 秒/);
+  assert.match(css, /\.player-shell\s*{[^}]*touch-action:\s*manipulation/s);
+  assert.match(css, /\.player-controls-hidden\s*{[^}]*visibility:\s*hidden/s);
+  assert.match(css, /\.player-help-dialog::backdrop/);
+  assert.match(css, /\.player-gesture-feedback-center\s*{[^}]*left:\s*50%/s);
+  assert.match(html, /x-for="feedback in playerGestureFeedback \? \[playerGestureFeedback\] : \[\]"/);
+  assert.match(html, /:key="feedback\.id"/);
+  assert.match(main, /createPlayerGestureFeedbackController/);
+  assert.match(css, /\.player-gesture-feedback\s*{[^}]*background:\s*transparent/s);
+  assert.match(css, /\.player-gesture-feedback-playback\s*{[^}]*background:\s*transparent/s);
+  assert.doesNotMatch(css, /\.player-gesture-feedback(?:-playback)?\s*{[^}]*radial-gradient/s);
+  assert.match(css, /animation:\s*player-feedback-fade-out 650ms ease-out forwards/);
+  assert.match(css, /@keyframes player-feedback-fade-out/);
+  assert.doesNotMatch(css, /@keyframes player-feedback-pop/);
+  const feedbackStyles = css.slice(css.indexOf('.player-gesture-feedback {'), css.indexOf('.player-gesture-feedback-left'));
+  assert.doesNotMatch(feedbackStyles, /\bborder:/);
 });
 
 test('live HLS is muted before attachment and autoplay state follows the play promise', async () => {
@@ -349,6 +387,32 @@ test('invalid timecodes are ignored and recorded in Debug', async () => {
   assert.equal(harness.video.currentTime, 0);
   assert.equal(harness.controller.getDebugEntries({ text: 'TIMECODE_INVALID' }).length, 1);
   await harness.controller.destroy();
+});
+
+test('gesture-sized seeks clamp records and live DVR to their playable boundaries', async () => {
+  const record = createHarness();
+  await record.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
+  record.video.duration = 20;
+  record.video.currentTime = 4;
+  assert.equal(record.controller.seek(record.video.currentTime - 10), true);
+  assert.equal(record.video.currentTime, 0);
+  record.video.currentTime = 16;
+  assert.equal(record.controller.seek(record.video.currentTime + 10), true);
+  assert.equal(record.video.currentTime, 20);
+  await record.controller.destroy();
+
+  const live = createHarness({ nativeHls: true });
+  live.video.buffered = new FakeTimeRanges([[5, 25]]);
+  live.video.seekable = new FakeTimeRanges([[5, 25]]);
+  live.video.currentTime = 10;
+  await live.controller.loadLive('panda');
+  assert.equal(live.controller.seek(live.video.currentTime - 10), true);
+  assert.equal(live.video.currentTime, 5);
+  live.video.currentTime = 20;
+  assert.equal(live.controller.seek(live.video.currentTime + 10), true);
+  assert.equal(live.video.currentTime, 25);
+  assert.equal(live.snapshot.following, true);
+  await live.controller.destroy();
 });
 
 test('AudioContext is lazy, unmute requires running state, and 200% gain is clamped when boost closes', async () => {
