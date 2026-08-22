@@ -24,15 +24,10 @@
             <img src="/icon.svg" alt="" class="size-9 rounded-[10px]" />
             <span class="hidden text-sm font-black tracking-[-0.01em] sm:inline">OKTW LIVE</span>
           </a>
-          <dl aria-label="平台統計" class="ml-auto grid shrink-0 grid-cols-3 divide-x divide-[var(--line)] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel)]">
-            <div class="min-w-11 px-2 py-1.5 text-center sm:min-w-14 sm:px-3"><dt class="text-[9px] font-bold leading-none text-[var(--muted)]">直播中</dt><dd class="mt-1 text-sm font-black leading-none" x-text="liveStreamers.length"></dd></div>
-            <div class="min-w-11 px-2 py-1.5 text-center sm:min-w-14 sm:px-3"><dt class="text-[9px] font-bold leading-none text-[var(--muted)]">主播</dt><dd class="mt-1 text-sm font-black leading-none" x-text="streamers.length"></dd></div>
-            <div class="min-w-11 px-2 py-1.5 text-center sm:min-w-14 sm:px-3"><dt class="text-[9px] font-bold leading-none text-[var(--muted)]">紀錄</dt><dd class="mt-1 text-sm font-black leading-none" x-text="records.length"></dd></div>
-          </dl>
-          <nav class="flex items-center gap-1 text-sm font-semibold" aria-label="主要導覽">
-            <a href="/#live-now" class="hidden rounded-lg px-3 py-2 transition hover:bg-[var(--soft)] md:block">正在直播</a>
-            <a href="/#creators" class="hidden rounded-lg px-3 py-2 transition hover:bg-[var(--soft)] md:block">主播</a>
-            <a href="/records" class="rounded-lg px-2 py-2 transition hover:bg-[var(--soft)] sm:px-3"><span class="sm:hidden">紀錄</span><span class="hidden sm:inline">直播紀錄</span></a>
+          <nav aria-label="主要導覽與平台統計" class="ml-auto grid shrink-0 grid-cols-3 divide-x divide-[var(--line)] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel)]">
+            <a href="/#live-now" class="header-stat-link flex min-w-11 flex-col items-center justify-center px-2 py-1.5 text-center transition hover:bg-[var(--soft)] focus-visible:bg-[var(--soft)] sm:min-w-14 sm:px-3"><span class="text-[9px] font-bold leading-none text-[var(--muted)]">直播中</span><span class="mt-1 text-sm font-black leading-none" x-text="liveStreamers.length"></span></a>
+            <a href="/#creators" class="header-stat-link flex min-w-11 flex-col items-center justify-center px-2 py-1.5 text-center transition hover:bg-[var(--soft)] focus-visible:bg-[var(--soft)] sm:min-w-14 sm:px-3"><span class="text-[9px] font-bold leading-none text-[var(--muted)]">主播</span><span class="mt-1 text-sm font-black leading-none" x-text="streamers.length"></span></a>
+            <a href="/records" class="header-stat-link flex min-w-11 flex-col items-center justify-center px-2 py-1.5 text-center transition hover:bg-[var(--soft)] focus-visible:bg-[var(--soft)] sm:min-w-14 sm:px-3"><span class="text-[9px] font-bold leading-none text-[var(--muted)]">紀錄</span><span class="mt-1 text-sm font-black leading-none" x-text="records.length"></span></a>
           </nav>
         </div>
       </header>

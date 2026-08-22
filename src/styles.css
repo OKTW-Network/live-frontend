@@ -49,6 +49,7 @@ main { view-transition-name: route-content; }
   animation-duration: .001ms;
 }
 a, button, input, select { outline-offset: 4px; }
+.header-stat-link:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 ::selection { background: var(--brand); color: #fff; }
 
 .section-heading {
