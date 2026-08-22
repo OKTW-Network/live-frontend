@@ -525,12 +525,13 @@ function registerApp(Alpine) {
       this.player?.setVolume(Number(event.target.value));
     },
 
-    changePlayerBoost(event) {
-      this.player?.setBoost(event.target.checked);
+    togglePlayerBoost() {
+      this.player?.setBoost(!this.playerSnapshot.boostEnabled);
     },
 
     changePlayerRate(event) {
-      this.player?.setPlaybackRate(Number(event.target.value));
+      const rate = this.playerRates[Math.round(Number(event.target.value))];
+      if (rate !== undefined) this.player?.setPlaybackRate(rate);
     },
 
     changeAutoCatchUp(event) {

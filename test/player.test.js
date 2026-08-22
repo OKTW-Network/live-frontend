@@ -261,7 +261,9 @@ test('player markup keeps core controls visible and moves secondary actions into
 
   const settingsMarkup = html.slice(settingsStart, titleStart);
   assert.match(settingsMarkup, /音量增強/);
-  assert.match(settingsMarkup, /aria-label="播放速度"/);
+  assert.match(settingsMarkup, /id="player-rate" type="range"[^>]*step="1"/);
+  assert.match(settingsMarkup, /id="player-rate-steps"/);
+  assert.doesNotMatch(settingsMarkup, /<select id="player-rate"/);
   assert.match(settingsMarkup, /自動追趕/);
   assert.match(settingsMarkup, /追上直播/);
   assert.match(settingsMarkup, /togglePictureInPicture/);
@@ -269,6 +271,8 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.match(settingsMarkup, /x-transition:enter/);
   assert.match(settingsMarkup, /class="player-settings-panel w-full border-t/);
   assert.match(settingsMarkup, /class="player-settings-grid/);
+  assert.equal((settingsMarkup.match(/class="player-setting-toggle"/g) || []).length, 3);
+  assert.equal((settingsMarkup.match(/:aria-pressed=/g) || []).length, 3);
   assert.doesNotMatch(settingsMarkup, /\babsolute\b|\bbottom-16\b|\bfixed\b/);
   assert.doesNotMatch(settingsMarkup, /\bml-auto\b|\bw-80\b|\brounded-xl\b|\bshadow-2xl\b/);
 
@@ -282,6 +286,8 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.match(css, /\.player-stage:fullscreen/);
   assert.match(css, /\.player-stage:fullscreen \.player-settings-panel\s*{[^}]*width:\s*100%/s);
   assert.match(css, /\.player-settings-grid\s*{[^}]*grid-template-columns:/s);
+  assert.doesNotMatch(css, /\.player-settings-grid\s*{[^}]*repeat\(2/s);
+  assert.doesNotMatch(css, /\.player-settings-grid[^}]*grid-template-columns:\s*repeat\(2/s);
   assert.doesNotMatch(css, /\.player-settings-panel\s*{[^}]*position:\s*fixed/s);
 });
 
