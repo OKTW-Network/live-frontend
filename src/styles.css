@@ -82,14 +82,31 @@ a, button, input, select { outline-offset: 4px; }
 
 .chat-scroll { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
 
-.player-shell:fullscreen {
+.player-stage:fullscreen {
+  display: flex;
+  flex-direction: column;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
+  background: #000;
+}
+
+.player-stage:fullscreen .player-shell {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
   border-radius: 0;
   aspect-ratio: auto;
 }
 
-.player-shell:fullscreen video { height: 100%; }
+.player-stage:fullscreen .player-shell video { height: 100%; }
+
+.player-stage:fullscreen .player-settings-panel {
+  width: min(20rem, calc(100% - 1.5rem));
+  max-height: min(55vh, 30rem);
+  flex: 0 0 auto;
+  margin: .5rem .75rem .75rem auto;
+}
 
 .player-controls {
   display: grid;
@@ -193,8 +210,9 @@ a, button, input, select { outline-offset: 4px; }
 .player-select option { color: #111; }
 
 .player-settings-panel {
-  max-height: calc(100% - 4.5rem);
+  max-height: min(70vh, 30rem);
   overflow-y: auto;
+  transform-origin: top right;
   scrollbar-color: rgb(255 255 255 / .35) transparent;
   scrollbar-width: thin;
 }
@@ -294,16 +312,6 @@ a, button, input, select { outline-offset: 4px; }
 
   .player-progress-row { min-width: 12rem; flex: 1 1 16rem; }
   .player-actions { flex: 0 0 auto; }
-}
-
-@media (max-width: 639px) {
-  .player-settings-panel {
-    position: fixed;
-    inset: auto 1rem max(1rem, env(safe-area-inset-bottom));
-    width: auto;
-    max-width: none;
-    max-height: min(70vh, 30rem);
-  }
 }
 
 @keyframes live-pulse {

@@ -240,8 +240,10 @@ test('exports exactly the eight supported playback rates', () => {
 
 test('player markup keeps core controls visible and moves secondary actions into settings and title', async () => {
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /<video[^>]*\scontrols(?:\s|=|>)/i);
   assert.match(html, /id="player-timeline"/);
+  assert.match(html, /x-ref="playerContainer"[^>]*class="player-stage"/);
   assert.match(html, /id="player-settings-panel"[^>]*role="dialog"/);
   assert.match(html, /aria-controls="player-settings-panel"/);
   assert.match(html, /aria-controls="player-debug-panel"/);
@@ -254,24 +256,28 @@ test('player markup keeps core controls visible and moves secondary actions into
   const controlsStart = html.indexOf('class="player-controls');
   const titleStart = html.indexOf('id="player-title-block"');
   const debugStart = html.indexOf('id="player-debug-panel"');
-  assert.ok(settingsStart >= 0 && settingsStart < controlsStart);
-  assert.ok(controlsStart < titleStart && titleStart < debugStart);
+  assert.ok(controlsStart >= 0 && controlsStart < settingsStart);
+  assert.ok(settingsStart < titleStart && titleStart < debugStart);
 
-  const settingsMarkup = html.slice(settingsStart, controlsStart);
+  const settingsMarkup = html.slice(settingsStart, titleStart);
   assert.match(settingsMarkup, /音量增強/);
   assert.match(settingsMarkup, /aria-label="播放速度"/);
   assert.match(settingsMarkup, /自動追趕/);
   assert.match(settingsMarkup, /追上直播/);
   assert.match(settingsMarkup, /togglePictureInPicture/);
   assert.match(settingsMarkup, /toggleDebug/);
+  assert.match(settingsMarkup, /x-transition:enter/);
+  assert.doesNotMatch(settingsMarkup, /\babsolute\b|\bbottom-16\b|\bfixed\b/);
 
-  const controlsMarkup = html.slice(controlsStart, titleStart);
+  const controlsMarkup = html.slice(controlsStart, settingsStart);
   assert.doesNotMatch(controlsMarkup, /aria-label="播放速度"|自動追趕|追上直播|togglePictureInPicture|toggleDebug|toggleShare/);
 
   const titleMarkup = html.slice(titleStart, debugStart);
   assert.match(titleMarkup, /aria-controls="player-share-panel"/);
   assert.match(titleMarkup, /包含目前時間/);
   assert.match(titleMarkup, /data-heroicon="share"/);
+  assert.match(css, /\.player-stage:fullscreen/);
+  assert.doesNotMatch(css, /\.player-settings-panel\s*{[^}]*position:\s*fixed/s);
 });
 
 test('live HLS is muted before attachment and autoplay state follows the play promise', async () => {
