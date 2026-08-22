@@ -1,132 +1,21 @@
-import { liveUrl, recordUrl } from './utils.js';
+import { liveUrl, recordUrl } from '../utils.js';
+import { createAudioSession } from './audio.js';
+import { createCatchUp } from './catch-up.js';
+import { createDebugLog, serializePayload } from './debug.js';
+import {
+  MEDIA_EVENTS,
+  STORAGE_KEYS,
+  clamp,
+  defaultMessage,
+  finiteOr,
+  freezeSnapshot,
+  latestRangeEnd,
+  readPreference,
+  readRanges,
+  writePreference,
+} from './shared.js';
 
 export const PLAYER_RATES = Object.freeze([0.25, 0.5, 0.75, 1, 2, 4, 8, 16]);
-
-const STORAGE_KEYS = Object.freeze({
-  volume: 'oktw.player.volumePercent',
-  boost: 'oktw.player.boostEnabled',
-  rate: 'oktw.player.selectedRate',
-  autoCatchUp: 'oktw.player.autoCatchUp',
-});
-
-const MEDIA_EVENTS = Object.freeze([
-  'abort', 'canplay', 'canplaythrough', 'durationchange', 'emptied', 'encrypted', 'ended', 'error',
-  'loadeddata', 'loadedmetadata', 'loadstart', 'pause', 'play', 'playing', 'progress', 'ratechange',
-  'seeked', 'seeking', 'stalled', 'suspend', 'timeupdate', 'volumechange', 'waiting', 'waitingforkey',
-  'enterpictureinpicture', 'leavepictureinpicture',
-]);
-
-const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
-const finiteOr = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-
-function readPreference(storage, key, fallback) {
-  try {
-    const value = storage?.getItem?.(key);
-    return value === null || value === undefined ? fallback : value;
-  } catch {
-    return fallback;
-  }
-}
-
-function writePreference(storage, key, value) {
-  try {
-    storage?.setItem?.(key, String(value));
-  } catch {
-    // Storage is optional. Playback must continue when it is unavailable.
-  }
-}
-
-function readRanges(ranges) {
-  const result = [];
-  if (!ranges) return result;
-  for (let index = 0; index < finiteOr(ranges.length); index += 1) {
-    try {
-      const start = Number(ranges.start(index));
-      const end = Number(ranges.end(index));
-      if (Number.isFinite(start) && Number.isFinite(end)) result.push({ start, end });
-    } catch {
-      break;
-    }
-  }
-  return result;
-}
-
-function latestRangeEnd(ranges) {
-  return ranges.length ? ranges[ranges.length - 1].end : null;
-}
-
-function forwardBufferFor(ranges, currentTime) {
-  const range = ranges.find(({ start, end }) => currentTime >= start - 0.05 && currentTime <= end + 0.05);
-  return range ? Math.max(0, range.end - currentTime) : 0;
-}
-
-function freezeSnapshot(value) {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  Object.values(value).forEach(freezeSnapshot);
-  return Object.freeze(value);
-}
-
-function serializePayload(value) {
-  const seen = new WeakSet();
-
-  function visit(input, depth = 0) {
-    if (input === null || ['string', 'number', 'boolean'].includes(typeof input)) {
-      if (typeof input === 'string' && input.length > 2048) return `${input.slice(0, 2048)}… [truncated]`;
-      if (typeof input === 'number' && !Number.isFinite(input)) return String(input);
-      return input;
-    }
-    if (typeof input === 'undefined') return '[undefined]';
-    if (typeof input === 'bigint') return `${input}n`;
-    if (typeof input === 'function') return `[Function ${input.name || 'anonymous'}]`;
-    if (typeof input === 'symbol') return String(input);
-    if (depth >= 4) return '[MaxDepth]';
-    if (input?.nodeType) {
-      return { type: 'DOMNode', nodeName: input.nodeName || input.tagName || 'unknown', id: input.id || undefined };
-    }
-    if (input instanceof Error) return { name: input.name, message: input.message, stack: input.stack };
-    if (seen.has(input)) return '[Circular]';
-    seen.add(input);
-
-    if (Array.isArray(input)) {
-      const values = input.slice(0, 50).map((item) => visit(item, depth + 1));
-      if (input.length > 50) values.push(`[${input.length - 50} items truncated]`);
-      return values;
-    }
-
-    const result = {};
-    const keys = Object.keys(input);
-    Object.entries(input).slice(0, 50).forEach(([key, item]) => { result[key] = visit(item, depth + 1); });
-    if (keys.length > 50) result.__truncated__ = `${keys.length - 50} keys`;
-    return result;
-  }
-
-  let safe;
-  try {
-    safe = visit(value);
-  } catch (error) {
-    safe = { __unserializable__: error?.message || String(error) };
-  }
-  try {
-    const json = JSON.stringify(safe);
-    if (json.length > 16384) return { preview: `${json.slice(0, 16384)}…`, __truncated__: '16KB' };
-  } catch {
-    return '[Unserializable]';
-  }
-  return safe;
-}
-
-function defaultMessage(state) {
-  if (state.notice) return state.notice;
-  if (state.autoplayState === 'blocked') return '瀏覽器已阻擋自動播放，請按下播放。';
-  if (state.autoplayState === 'playing-muted') return '直播已靜音／開啟聲音';
-  return {
-    loading: '正在連線影音來源…',
-    ready: '已就緒，按下播放即可開始。',
-    offline: '目前沒有直播，或串流無法取得。',
-    unsupported: '這個瀏覽器不支援此影音格式。',
-    error: state.mode === 'record' ? '瀏覽器無法播放這份直播紀錄。' : '影音播放發生錯誤。',
-  }[state.playerState] || '';
-}
 
 export function createPlayerController({
   video,
@@ -160,21 +49,12 @@ export function createPlayerController({
   let sourceGeneration = 0;
   let sourceCleanups = [];
   let globalCleanups = [];
-  let liveTimer = null;
   let pendingTimecode = null;
   let autoplayAttempted = false;
   let mediaRecoveryAttempted = false;
-  let nativeCorsFallbackAttempted = false;
-  let audioContext = null;
-  let audioSource = null;
-  let gainNode = null;
-  let audioSourceVideo = null;
-  let destroyed = false;
   let suppressPauseEvent = false;
   let lastSnapshot = null;
-  let debugSequence = 0;
-  let debugEntries = [];
-  let latencySamples = [];
+  let destroyed = false;
 
   const state = {
     mode: null,
@@ -209,45 +89,45 @@ export function createPlayerController({
     shareStatus: '',
   };
 
-  function pushDebug(source, level, event, payload = {}) {
-    const entry = Object.freeze({
-      sequence: ++debugSequence,
-      time: new Date(now()).toISOString(),
-      source,
-      level,
-      event,
-      payload: serializePayload(payload),
-    });
-    debugEntries.push(entry);
-    if (debugEntries.length > 500) debugEntries = debugEntries.slice(-500);
-    try { onDebug({ count: debugEntries.length, entry }); } catch { /* Debug observers are isolated. */ }
-    return entry;
+  const debugLog = createDebugLog({ now, onDebug });
+  const pushDebug = (...args) => debugLog.push(...args);
+
+  function listen(target, type, handler, options, collection = sourceCleanups) {
+    if (!target?.addEventListener) return;
+    target.addEventListener(type, handler, options);
+    collection.push(() => target.removeEventListener?.(type, handler, options));
   }
 
-  function updateLiveMetrics() {
-    const buffered = readRanges(currentVideo.buffered);
-    const currentTime = finiteOr(currentVideo.currentTime);
-    state.forwardBuffer = forwardBufferFor(buffered, currentTime);
-    if (state.mode !== 'live') {
-      state.latency = null;
-      state.targetLatency = null;
-      return;
-    }
-    if (state.engine === 'hls' && hls) {
-      state.latency = Number.isFinite(hls.latency) ? hls.latency : null;
-      state.targetLatency = Number.isFinite(hls.targetLatency) ? hls.targetLatency : null;
-      return;
-    }
-    const liveEdge = latestRangeEnd(buffered);
-    state.latency = liveEdge === null ? null : Math.max(0, liveEdge - currentTime);
-  }
+  const audio = createAudioSession({
+    getVideo: () => currentVideo,
+    setCurrentVideo: (next) => { currentVideo = next; },
+    state,
+    AudioContextImpl,
+    pushDebug,
+    emitSnapshot: () => emitSnapshot(),
+    listen,
+    onVideoChange,
+    getSourceCleanups: () => sourceCleanups,
+    setSourceCleanups: (next) => { sourceCleanups = next; },
+    globalCleanups,
+    getPreferredVolume: () => preferredVolume,
+    locationImpl,
+    fetchImpl,
+    onVideoReplaced: () => bindMediaEvents(),
+  });
 
-  function effectiveVolume() {
-    return clamp(preferredVolume, 0, state.boostEnabled && state.boostAvailable ? 200 : 100);
-  }
+  const catchUp = createCatchUp({
+    state,
+    getVideo: () => currentVideo,
+    getHls: () => hls,
+    pushDebug,
+    emitSnapshot: () => emitSnapshot(),
+    setIntervalImpl,
+    clearIntervalImpl,
+  });
 
   function buildSnapshot() {
-    updateLiveMetrics();
+    catchUp.updateLiveMetrics();
     const buffered = readRanges(currentVideo.buffered);
     const seekable = readRanges(currentVideo.seekable);
     const timelineStart = seekable.length ? seekable[0].start : 0;
@@ -255,6 +135,9 @@ export function createPlayerController({
     const timelineEnd = seekable.length
       ? seekable[seekable.length - 1].end
       : Number.isFinite(duration) ? Math.max(0, duration) : 0;
+    const volume = audio.effectiveVolume();
+    const gainNode = audio.getGainNode();
+    const audioContext = audio.getAudioContext();
     const snapshot = {
       mode: state.mode,
       engine: state.engine,
@@ -284,14 +167,14 @@ export function createPlayerController({
       latency: state.latency,
       targetLatency: state.targetLatency,
       forwardBuffer: state.forwardBuffer,
-      volumePercent: effectiveVolume(),
+      volumePercent: volume,
       preferredVolumePercent: preferredVolume,
       muted: Boolean(currentVideo.muted || state.muted),
       muteReason: state.muteReason,
       boostEnabled: state.boostEnabled,
       boostAvailable: state.boostAvailable,
       boostUnavailableReason: state.boostUnavailableReason,
-      gain: gainNode?.gain ? finiteOr(gainNode.gain.value, effectiveVolume() / 100) : effectiveVolume() / 100,
+      gain: gainNode?.gain ? finiteOr(gainNode.gain.value, volume / 100) : volume / 100,
       audioContextState: audioContext?.state || (AudioContextImpl ? 'not-created' : 'unavailable'),
       autoplayState: state.autoplayState,
       lastPlayResult: state.lastPlayResult,
@@ -300,7 +183,7 @@ export function createPlayerController({
       shareStatus: state.shareStatus,
       message: defaultMessage(state),
       lastError: state.lastError,
-      debugCount: debugEntries.length,
+      debugCount: debugLog.count,
       capabilities: {
         boost: state.boostAvailable,
         pictureInPicture: Boolean(documentImpl?.pictureInPictureEnabled && currentVideo.requestPictureInPicture),
@@ -318,106 +201,11 @@ export function createPlayerController({
     return lastSnapshot;
   }
 
-  function listen(target, type, handler, options, collection = sourceCleanups) {
-    if (!target?.addEventListener) return;
-    target.addEventListener(type, handler, options);
-    collection.push(() => target.removeEventListener?.(type, handler, options));
-  }
-
   function setVideoMuted(muted, reason) {
     state.muted = Boolean(muted);
     state.muteReason = muted ? reason : 'none';
     currentVideo.muted = Boolean(muted);
     pushDebug('player', 'info', 'MUTE_CHANGED', { muted: state.muted, reason: state.muteReason });
-  }
-
-  function applyVolume() {
-    const volume = effectiveVolume();
-    if (gainNode?.gain) gainNode.gain.value = volume / 100;
-    currentVideo.volume = audioSourceVideo === currentVideo && gainNode ? 1 : clamp(volume / 100, 0, 1);
-  }
-
-  function setBoostCapability(allowed, reason = '') {
-    state.webAudioAllowed = Boolean(allowed);
-    state.boostAvailable = Boolean(allowed && AudioContextImpl);
-    state.boostUnavailableReason = state.boostAvailable
-      ? ''
-      : reason || (AudioContextImpl ? '來源未開放 Web Audio' : '瀏覽器不支援 Web Audio');
-    applyVolume();
-  }
-
-  function disconnectAudioGraph() {
-    try { audioSource?.disconnect?.(); } catch { /* Already disconnected. */ }
-    try { gainNode?.disconnect?.(); } catch { /* Already disconnected. */ }
-    audioSource = null;
-    gainNode = null;
-    audioSourceVideo = null;
-  }
-
-  function replaceVideoForNativeAudio() {
-    if (!audioSource || audioSourceVideo !== currentVideo || !currentVideo.cloneNode) return false;
-    const replacement = currentVideo.cloneNode(true);
-    replacement.removeAttribute?.('src');
-    replacement.removeAttribute?.('crossorigin');
-    replacement.src = '';
-    replacement.muted = state.muted;
-    const parent = currentVideo.parentNode;
-    if (!parent?.replaceChild) return false;
-    sourceCleanups.forEach((remove) => remove());
-    sourceCleanups = [];
-    const previous = currentVideo;
-    disconnectAudioGraph();
-    parent.replaceChild(replacement, previous);
-    currentVideo = replacement;
-    pushDebug('audio', 'warn', 'MEDIA_ELEMENT_REPLACED', { reason: 'cors-native-fallback' });
-    try { onVideoChange(replacement); } catch { /* Optional observer. */ }
-    return true;
-  }
-
-  function ensureAudioGraph() {
-    if (!state.webAudioAllowed || !AudioContextImpl) return null;
-    try {
-      if (!audioContext || audioContext.state === 'closed') {
-        audioContext = new AudioContextImpl();
-        const handleStateChange = () => {
-          const event = audioContext.state === 'running' ? 'AUDIO_CONTEXT_RESUME' : 'AUDIO_CONTEXT_SUSPEND';
-          pushDebug('audio', 'info', event, { state: audioContext.state });
-          emitSnapshot();
-        };
-        listen(audioContext, 'statechange', handleStateChange, undefined, globalCleanups);
-        pushDebug('audio', 'info', 'AUDIO_CONTEXT_CREATED', { state: audioContext.state });
-      }
-      if (!audioSource || audioSourceVideo !== currentVideo) {
-        disconnectAudioGraph();
-        audioSource = audioContext.createMediaElementSource(currentVideo);
-        gainNode = audioContext.createGain();
-        audioSource.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        audioSourceVideo = currentVideo;
-        applyVolume();
-        pushDebug('audio', 'info', 'AUDIO_GRAPH_CREATED', { gain: gainNode.gain?.value });
-      }
-      return audioContext;
-    } catch (error) {
-      setBoostCapability(false, '無法建立 Web Audio 音訊圖');
-      state.lastError = { name: error?.name || 'AudioError', message: error?.message || String(error) };
-      pushDebug('audio', 'error', 'AUDIO_GRAPH_ERROR', state.lastError);
-      return null;
-    }
-  }
-
-  function startAudioActivation() {
-    const context = ensureAudioGraph();
-    if (!context) return Promise.resolve({ required: false, running: true });
-    pushDebug('audio', 'info', 'AUDIO_CONTEXT_RESUME_ATTEMPT', { state: context.state });
-    let result;
-    try { result = context.resume?.(); } catch (error) { result = Promise.reject(error); }
-    return Promise.resolve(result)
-      .then(() => ({ required: true, running: context.state === 'running' }))
-      .catch((error) => {
-        pushDebug('audio', 'error', 'AUDIO_CONTEXT_RESUME_FAILED', error);
-        return { required: true, running: false, error };
-      });
   }
 
   function requestVideoPlay() {
@@ -427,15 +215,15 @@ export function createPlayerController({
   async function userActivatedPlay({ unmute = false, reason = 'manual-play' } = {}) {
     state.notice = '';
     const generation = sourceGeneration;
-    const audioPromise = startAudioActivation();
+    const audioPromise = audio.startActivation();
     const playPromise = requestVideoPlay();
     pushDebug('player', 'info', 'PLAY_ATTEMPT', { reason, unmute });
     const [audioResult, playResult] = await Promise.allSettled([audioPromise, playPromise]);
     if (generation !== sourceGeneration || destroyed) return false;
 
-    const audio = audioResult.status === 'fulfilled' ? audioResult.value : { required: true, running: false };
+    const audioOutcome = audioResult.status === 'fulfilled' ? audioResult.value : { required: true, running: false };
     if (unmute) {
-      if (audio.required && !audio.running) {
+      if (audioOutcome.required && !audioOutcome.running) {
         setVideoMuted(true, 'audio-context-blocked');
         state.notice = '再次點擊以啟用聲音';
       } else {
@@ -450,7 +238,7 @@ export function createPlayerController({
       state.userPaused = false;
       state.hasPlayed = true;
       pushDebug('player', 'info', 'PLAY_SUCCESS', { reason });
-      applyRatePolicy('manual-play');
+      catchUp.applyRatePolicy('manual-play');
       emitSnapshot();
       return true;
     }
@@ -536,33 +324,6 @@ export function createPlayerController({
     emitSnapshot();
   }
 
-  function updateFollowingAfterSeek() {
-    if (state.mode !== 'live') return;
-    const end = latestRangeEnd(readRanges(currentVideo.buffered));
-    const next = end !== null && end - finiteOr(currentVideo.currentTime) <= 2;
-    if (next !== state.following) {
-      state.following = next;
-      state.catchUpReason = next ? 'seek-near-live-edge' : 'dvr-seek';
-      pushDebug('player', 'info', 'FOLLOWING_CHANGED', { following: next, reason: state.catchUpReason });
-    }
-    applyRatePolicy(state.catchUpReason);
-  }
-
-  function handleNativeCorsFailure() {
-    if (state.engine !== 'native' || !currentVideo.crossOrigin || nativeCorsFallbackAttempted) return false;
-    nativeCorsFallbackAttempted = true;
-    const url = state.sourceUrl;
-    pushDebug('audio', 'warn', 'CORS_MEDIA_FALLBACK', { url });
-    const replaced = audioSourceVideo === currentVideo && replaceVideoForNativeAudio();
-    currentVideo.removeAttribute?.('crossorigin');
-    try { currentVideo.crossOrigin = null; } catch { /* Optional property. */ }
-    setBoostCapability(false, '跨來源影音未開放 CORS，已使用原生音量');
-    if (replaced) bindMediaEvents();
-    currentVideo.src = url;
-    currentVideo.load?.();
-    return true;
-  }
-
   function handleMediaEvent(type, event) {
     pushDebug('media', type === 'error' ? 'error' : 'debug', type, {
       currentTime: finiteOr(currentVideo.currentTime),
@@ -582,24 +343,24 @@ export function createPlayerController({
       state.waiting = false;
       state.userPaused = false;
       state.hasPlayed = true;
-      applyRatePolicy('playing');
+      catchUp.applyRatePolicy('playing');
     } else if (type === 'pause') {
       if (!suppressPauseEvent && state.pip && state.playerState !== 'idle') state.userPaused = true;
       if (state.playerState !== 'idle' && !currentVideo.ended) state.playerState = 'paused';
-      applyRatePolicy('paused');
+      catchUp.applyRatePolicy('paused');
     } else if (type === 'waiting' || type === 'stalled') {
       state.waiting = true;
       state.playerState = 'waiting';
-      stopCatchUp(type);
+      catchUp.stopCatchUp(type);
     } else if (type === 'canplay') {
       state.waiting = false;
       if (currentVideo.paused && state.playerState === 'waiting') state.playerState = 'ready';
     } else if (type === 'ended') {
       state.playerState = 'paused';
       state.userPaused = false;
-      stopCatchUp('ended');
+      catchUp.stopCatchUp('ended');
     } else if (type === 'error') {
-      if (handleNativeCorsFailure()) return;
+      if (audio.handleNativeCorsFailure()) return;
       state.lastError = serializePayload(currentVideo.error || { message: 'Media element error' });
       state.playerState = state.mode === 'live' ? 'offline' : 'error';
     } else if (type === 'ratechange') {
@@ -616,10 +377,10 @@ export function createPlayerController({
       }
     } else if (type === 'seeked') {
       pendingTimecode = null;
-      updateFollowingAfterSeek();
+      catchUp.updateFollowingAfterSeek();
     } else if (type === 'volumechange') {
       state.muted = Boolean(currentVideo.muted);
-      if (!gainNode && Number.isFinite(currentVideo.volume)) preferredVolume = Math.round(currentVideo.volume * 100);
+      if (!audio.getGainNode() && Number.isFinite(currentVideo.volume)) preferredVolume = Math.round(currentVideo.volume * 100);
     } else if (type === 'enterpictureinpicture') {
       state.pip = true;
       pushDebug('pip', 'info', 'PIP_ENTER', {});
@@ -634,157 +395,28 @@ export function createPlayerController({
     MEDIA_EVENTS.forEach((type) => listen(currentVideo, type, (event) => handleMediaEvent(type, event)));
   }
 
-  async function probeCors(url) {
-    let parsed;
-    try {
-      parsed = new URL(url, locationImpl.href);
-      const page = new URL(locationImpl.href);
-      if (parsed.origin === page.origin) return { allowed: true, crossOrigin: false };
-    } catch {
-      return { allowed: false, crossOrigin: false };
-    }
-    if (!fetchImpl) return { allowed: false, crossOrigin: false };
-    try {
-      const response = await fetchImpl(parsed.href, {
-        method: 'GET', mode: 'cors', cache: 'no-store', headers: { Range: 'bytes=0-0' },
-      });
-      try { await response.body?.cancel?.(); } catch { /* Response may not expose a body. */ }
-      return { allowed: Boolean(response.ok), crossOrigin: Boolean(response.ok) };
-    } catch (error) {
-      pushDebug('audio', 'warn', 'CORS_PROBE_FAILED', { url, error });
-      return { allowed: false, crossOrigin: false };
-    }
-  }
-
-  async function configureNativeSource(url, generation) {
-    const cors = await probeCors(url);
-    if (generation !== sourceGeneration) return false;
-    const replaced = !cors.allowed && audioSourceVideo === currentVideo && replaceVideoForNativeAudio();
-    if (replaced) bindMediaEvents();
-    if (cors.crossOrigin) {
-      currentVideo.crossOrigin = 'anonymous';
-      currentVideo.setAttribute?.('crossorigin', 'anonymous');
-    } else {
-      currentVideo.removeAttribute?.('crossorigin');
-      try { currentVideo.crossOrigin = null; } catch { /* Optional property. */ }
-    }
-    setBoostCapability(cors.allowed, cors.allowed ? '' : '跨來源影音未開放 CORS，僅支援 0–100%');
-    return true;
-  }
-
-  function stopCatchUp(reason) {
-    const previous = finiteOr(currentVideo.playbackRate, 1);
-    if (hls?.config) hls.config.maxLiveSyncPlaybackRate = 1;
-    if (state.selectedRate === 1 && previous !== 1) {
-      try { currentVideo.playbackRate = 1; } catch { /* Browser may reject rates. */ }
-    }
-    if (state.catchUpActive || state.catchUpReason !== reason) {
-      state.catchUpActive = false;
-      state.catchUpReason = reason;
-      pushDebug('player', 'info', 'CATCH_UP_CHANGED', { active: false, reason, effectiveRate: currentVideo.playbackRate });
-    }
-  }
-
-  function autoCatchUpEligible() {
-    return state.mode === 'live' && state.autoCatchUp && state.selectedRate === 1 && state.following
-      && currentVideo.paused === false && !state.waiting;
-  }
-
-  function applyRatePolicy(reason) {
-    if (state.mode !== 'live') {
-      try { currentVideo.playbackRate = state.selectedRate; } catch { /* Handled by setPlaybackRate. */ }
-      return;
-    }
-    if (state.engine === 'hls' && hls?.config) {
-      const enabled = autoCatchUpEligible();
-      hls.config.maxLiveSyncPlaybackRate = enabled ? 1.25 : 1;
-      if (!enabled) {
-        try { currentVideo.playbackRate = state.selectedRate; } catch { /* Handled elsewhere. */ }
-        if (state.catchUpActive) stopCatchUp(reason);
-      }
-      return;
-    }
-    if (!autoCatchUpEligible()) stopCatchUp(reason);
-  }
-
-  function nativeCatchUpTick() {
-    updateLiveMetrics();
-    if (state.engine !== 'native' || !autoCatchUpEligible()) {
-      applyRatePolicy('not-eligible');
-      emitSnapshot();
-      return;
-    }
-    if (state.targetLatency === null && state.latency !== null && state.forwardBuffer > 1) {
-      latencySamples.push(state.latency);
-      latencySamples = latencySamples.slice(-5);
-      if (latencySamples.length === 5 && Math.max(...latencySamples) - Math.min(...latencySamples) <= 1) {
-        const sorted = [...latencySamples].sort((a, b) => a - b);
-        state.targetLatency = clamp(sorted[2], 1, 10);
-        pushDebug('player', 'info', 'TARGET_LATENCY_ESTABLISHED', { samples: latencySamples, target: state.targetLatency });
-      }
-    }
-    if (state.targetLatency === null || state.latency === null) {
-      emitSnapshot();
-      return;
-    }
-    if (state.forwardBuffer <= 1) stopCatchUp('forward-buffer-low');
-    else if (state.latency > state.targetLatency + 1) {
-      if (finiteOr(currentVideo.playbackRate, 1) !== 1.25) currentVideo.playbackRate = 1.25;
-      if (!state.catchUpActive) {
-        state.catchUpActive = true;
-        state.catchUpReason = 'latency-high';
-        pushDebug('player', 'info', 'CATCH_UP_CHANGED', { active: true, reason: state.catchUpReason });
-      }
-    } else if (Math.abs(state.latency - state.targetLatency) <= 0.25) stopCatchUp('target-reached');
-    emitSnapshot();
-  }
-
-  function liveTick() {
-    if (state.engine === 'native') return nativeCatchUpTick();
-    updateLiveMetrics();
-    const effective = finiteOr(currentVideo.playbackRate, 1);
-    const active = autoCatchUpEligible() && effective > 1.001;
-    if (active !== state.catchUpActive) {
-      state.catchUpActive = active;
-      state.catchUpReason = active ? 'hls-latency-controller' : 'hls-rate-normal';
-      pushDebug('player', 'info', 'CATCH_UP_CHANGED', { active, reason: state.catchUpReason, effectiveRate: effective });
-    }
-    emitSnapshot();
-  }
-
-  function startLiveTimer() {
-    if (liveTimer || !setIntervalImpl) return;
-    liveTimer = setIntervalImpl(liveTick, 500);
-  }
-
   function clearSourceResources({ resetMedia = true } = {}) {
     sourceGeneration += 1;
     sourceCleanups.forEach((remove) => remove());
     sourceCleanups = [];
-    if (liveTimer) clearIntervalImpl?.(liveTimer);
-    liveTimer = null;
+    catchUp.reset();
     if (hls) {
       try { hls.destroy?.(); } catch { /* Best-effort teardown. */ }
       hls = null;
     }
     autoplayAttempted = false;
     mediaRecoveryAttempted = false;
-    nativeCorsFallbackAttempted = false;
+    audio.resetCorsFallback();
     pendingTimecode = null;
-    latencySamples = [];
-    state.targetLatency = null;
-    state.latency = null;
-    state.forwardBuffer = 0;
-    state.catchUpActive = false;
     state.following = false;
     state.waiting = false;
     if (resetMedia) {
       suppressPauseEvent = true;
-      try { currentVideo.pause?.(); } catch { /* Optional fake. */ }
+      try { currentVideo.pause?.(); } catch {}
       suppressPauseEvent = false;
       currentVideo.removeAttribute?.('src');
-      try { currentVideo.src = ''; } catch { /* Optional fake. */ }
-      try { currentVideo.load?.(); } catch { /* Optional fake. */ }
+      try { currentVideo.src = ''; } catch {}
+      try { currentVideo.load?.(); } catch {}
     }
   }
 
@@ -806,7 +438,7 @@ export function createPlayerController({
     state.hasPlayed = false;
     state.pip = false;
     state.following = mode === 'live';
-    setBoostCapability(false, '正在確認來源的 Web Audio 能力');
+    audio.setBoostCapability(false, '正在確認來源的 Web Audio 能力');
     currentVideo.playsInline = true;
     currentVideo.setAttribute?.('playsinline', '');
     if (mode === 'live' && !preserveMute) {
@@ -836,7 +468,7 @@ export function createPlayerController({
         pushDebug('hls', data?.fatal ? 'error' : 'debug', eventName, data);
         if (eventName === Hls.Events.MANIFEST_PARSED) {
           state.playerState = 'ready';
-          setBoostCapability(true);
+          audio.setBoostCapability(true);
           attemptMutedAutoplay();
         }
         if (eventName === Hls.Events.ERROR && data?.fatal) {
@@ -860,12 +492,12 @@ export function createPlayerController({
     const url = liveUrl(streamer);
     const generation = initializeSource('live', streamer, url, { preserveMute: Boolean(options.preserveMute) });
     if (currentVideo.canPlayType?.('application/vnd.apple.mpegurl')) {
-      const configured = await configureNativeSource(url, generation);
+      const configured = await audio.configureNativeSource(url, generation, sourceGeneration);
       if (!configured || generation !== sourceGeneration) return 'cancelled';
       state.engine = 'native';
       currentVideo.src = url;
       currentVideo.load?.();
-      startLiveTimer();
+      catchUp.startLiveTimer();
       pushDebug('player', 'info', 'ENGINE_SELECTED', { engine: 'native' });
       emitSnapshot();
       return 'native';
@@ -880,12 +512,12 @@ export function createPlayerController({
       return 'unsupported';
     }
     state.engine = 'hls';
-    setBoostCapability(true);
+    audio.setBoostCapability(true);
     hls = new Hls({ enableWorker: true, lowLatencyMode: true, maxLiveSyncPlaybackRate: 1.25 });
     bindHlsEvents(Hls, generation);
     hls.attachMedia(currentVideo);
     hls.loadSource(url);
-    startLiveTimer();
+    catchUp.startLiveTimer();
     pushDebug('player', 'info', 'ENGINE_SELECTED', { engine: 'hls' });
     emitSnapshot();
     return 'hls';
@@ -895,7 +527,7 @@ export function createPlayerController({
     const url = recordUrl(record.filename);
     const generation = initializeSource('record', record.filename, url, { preserveMute: true });
     pendingTimecode = parseTimecode(timecode);
-    const configured = await configureNativeSource(url, generation);
+    const configured = await audio.configureNativeSource(url, generation, sourceGeneration);
     if (!configured || generation !== sourceGeneration) return 'cancelled';
     state.engine = 'native';
     currentVideo.src = url;
@@ -922,7 +554,7 @@ export function createPlayerController({
     currentVideo.pause?.();
     state.playerState = 'paused';
     pushDebug('player', 'info', 'USER_PAUSE', {});
-    applyRatePolicy('user-paused');
+    catchUp.applyRatePolicy('user-paused');
     emitSnapshot();
   }
 
@@ -938,7 +570,7 @@ export function createPlayerController({
       return false;
     }
     pushDebug('player', 'info', 'USER_SEEK', { target });
-    updateFollowingAfterSeek();
+    catchUp.updateFollowingAfterSeek();
     emitSnapshot();
     return true;
   }
@@ -952,7 +584,7 @@ export function createPlayerController({
       state.following = true;
       state.catchUpReason = 'go-live';
       pushDebug('player', 'info', 'GO_LIVE', { target, bufferedEnd: end });
-      applyRatePolicy('go-live');
+      catchUp.applyRatePolicy('go-live');
       emitSnapshot();
     }
     return result;
@@ -968,7 +600,7 @@ export function createPlayerController({
     if (preferredVolume <= 0) {
       preferredVolume = lastAudibleVolume || 100;
       writePreference(storage, STORAGE_KEYS.volume, preferredVolume);
-      applyVolume();
+      audio.applyVolume();
     }
     return userActivatedPlay({ unmute: true, reason: 'user-unmute' });
   }
@@ -978,7 +610,7 @@ export function createPlayerController({
     preferredVolume = clamp(finiteOr(percent), 0, maximum);
     if (preferredVolume > 0) lastAudibleVolume = preferredVolume;
     writePreference(storage, STORAGE_KEYS.volume, preferredVolume);
-    applyVolume();
+    audio.applyVolume();
     if (preferredVolume === 0) {
       setVideoMuted(true, 'volume-zero');
       const activation = userActivatedPlay({ unmute: false, reason: 'volume-change' });
@@ -999,7 +631,7 @@ export function createPlayerController({
       writePreference(storage, STORAGE_KEYS.volume, preferredVolume);
     }
     writePreference(storage, STORAGE_KEYS.boost, state.boostEnabled);
-    applyVolume();
+    audio.applyVolume();
     pushDebug('audio', 'info', 'BOOST_CHANGED', { enabled: state.boostEnabled, volume: preferredVolume });
     emitSnapshot();
     return true;
@@ -1017,14 +649,14 @@ export function createPlayerController({
       state.selectedRate = requested;
       state.catchUpActive = false;
       writePreference(storage, STORAGE_KEYS.rate, requested);
-      applyRatePolicy('selected-rate-changed');
+      catchUp.applyRatePolicy('selected-rate-changed');
       pushDebug('player', 'info', 'PLAYBACK_RATE_CHANGED', { previous, selected: requested, effective: currentVideo.playbackRate });
       emitSnapshot();
       return true;
     } catch (error) {
       state.selectedRate = previous;
       try { currentVideo.playbackRate = previousEffective; } catch { /* No valid recovery available. */ }
-      applyRatePolicy('rate-rejected');
+      catchUp.applyRatePolicy('rate-rejected');
       state.notice = `瀏覽器不支援 ${requested}x，已恢復 ${previous}x`;
       pushDebug('player', 'warn', 'PLAYBACK_RATE_REJECTED', { requested, previous, error });
       emitSnapshot();
@@ -1035,7 +667,7 @@ export function createPlayerController({
   function setAutoCatchUp(enabled) {
     state.autoCatchUp = Boolean(enabled);
     writePreference(storage, STORAGE_KEYS.autoCatchUp, state.autoCatchUp);
-    applyRatePolicy(state.autoCatchUp ? 'auto-catch-up-enabled' : 'auto-catch-up-disabled');
+    catchUp.applyRatePolicy(state.autoCatchUp ? 'auto-catch-up-enabled' : 'auto-catch-up-disabled');
     pushDebug('player', 'info', 'AUTO_CATCH_UP_CHANGED', { enabled: state.autoCatchUp });
     emitSnapshot();
   }
@@ -1110,24 +742,17 @@ export function createPlayerController({
     }
   }
 
-  function getDebugEntries({ source = '', level = '', text = '' } = {}) {
-    const needle = String(text).trim().toLocaleLowerCase('zh-TW');
-    return debugEntries.filter((entry) => {
-      if (source && entry.source !== source) return false;
-      if (level && entry.level !== level) return false;
-      if (!needle) return true;
-      return JSON.stringify(entry).toLocaleLowerCase('zh-TW').includes(needle);
-    });
+  function getDebugEntries(filters) {
+    return debugLog.getEntries(filters);
   }
 
   function clearDebug() {
-    debugEntries = [];
-    try { onDebug({ count: 0, entry: null }); } catch { /* Debug observers are isolated. */ }
+    debugLog.clear();
     emitSnapshot();
   }
 
   function exportDebug() {
-    return JSON.stringify({ version: 1, exportedAt: new Date(now()).toISOString(), snapshot: lastSnapshot || buildSnapshot(), entries: debugEntries }, null, 2);
+    return debugLog.exportJson({ snapshot: lastSnapshot || buildSnapshot() });
   }
 
   function cleanup() {
@@ -1147,7 +772,7 @@ export function createPlayerController({
     state.userPaused = false;
     state.hasPlayed = false;
     state.pip = false;
-    setBoostCapability(false, '尚未載入可用來源');
+    audio.setBoostCapability(false, '尚未載入可用來源');
     emitSnapshot();
   }
 
@@ -1157,10 +782,7 @@ export function createPlayerController({
     cleanup();
     globalCleanups.forEach((remove) => remove());
     globalCleanups = [];
-    disconnectAudioGraph();
-    if (audioContext && audioContext.state !== 'closed') {
-      try { await audioContext.close?.(); } catch { /* Best-effort close. */ }
-    }
+    await audio.close();
     destroyed = true;
   }
 
@@ -1220,7 +842,7 @@ export function createPlayerController({
   listen(documentImpl, 'visibilitychange', handleVisibilityChange, undefined, globalCleanups);
   listen(documentImpl, 'fullscreenchange', handleFullscreenChange, undefined, globalCleanups);
   currentVideo.muted = state.muted;
-  applyVolume();
+  audio.applyVolume();
   let autoplayPolicy = 'unavailable';
   try { autoplayPolicy = navigatorImpl.getAutoplayPolicy?.(currentVideo) || 'unavailable'; } catch { /* Debug-only API. */ }
   pushDebug('player', 'info', 'PLAYER_CREATED', { autoplayPolicy });

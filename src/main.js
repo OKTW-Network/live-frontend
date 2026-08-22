@@ -7,7 +7,7 @@ import {
   createPlayerGestureRecognizer,
   isPlayerGestureBlockedTarget,
 } from './player-gestures.js';
-import { createPlayerController, PLAYER_RATES } from './player.js';
+import { createPlayerController, PLAYER_RATES } from './player/controller.js';
 import {
   PAGE_SIZE,
   RECORD_LIST_URL,
@@ -871,10 +871,6 @@ function registerApp(Alpine) {
 
     streamerInitial(name) {
       return String(name || '?').trim().slice(0, 2).toLocaleUpperCase('zh-TW');
-    },
-
-    playerMessage() {
-      return this.playerSnapshot.message || '';
     },
 
     chatStateLabel() {

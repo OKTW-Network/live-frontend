@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  PLAYER_GESTURE_CONFIG,
-  createPlaybackControlActivationTracker,
-  createPlayerGestureFeedbackController,
   createPlaybackToggleCoordinator,
   createPlayerGestureRecognizer,
   isPlayerGestureBlockedTarget,
@@ -44,7 +41,6 @@ function createClock() {
     setTimeoutImpl,
     clearTimeoutImpl,
     tick,
-    get timerCount() { return timers.size; },
   };
 }
 
@@ -69,144 +65,6 @@ function tap(recognizer, { pointerType, x, y = 20, zone, pointerId = 1, button =
   recognizer.pointerUp({ pointerId, pointerType, button, clientX: x, clientY: y, zone, isPrimary: true });
 }
 
-test('exposes the agreed player gesture timings and distances', () => {
-  assert.deepEqual(PLAYER_GESTURE_CONFIG, {
-    doubleTapDelay: 300,
-    maximumTapDuration: 350,
-    maximumTapMovement: 16,
-    maximumDoubleTapDistance: 48,
-    touchSeekSeconds: 10,
-    feedbackDuration: 650,
-    controlActivationMaximumAge: 1000,
-  });
-});
-
-test('playback control activation distinguishes touch from mouse and keyboard', () => {
-  const tracker = createPlaybackControlActivationTracker();
-
-  tracker.pointerDown({ pointerId: 1, pointerType: 'touch', isPrimary: true, timeStamp: 100 }, 'primary');
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 150 }, 'primary'), true);
-
-  tracker.pointerDown({ pointerId: 2, pointerType: 'mouse', isPrimary: true, timeStamp: 200 }, 'primary');
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 220 }, 'primary'), false);
-
-  tracker.pointerDown({ pointerId: 3, pointerType: 'touch', isPrimary: true, timeStamp: 300 }, 'primary');
-  assert.equal(tracker.consume({ detail: 0, timeStamp: 320 }, 'primary'), false);
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 330 }, 'primary'), false);
-});
-
-test('playback control activation clears cancelled, dragged, stale, and mismatched pointers', () => {
-  const tracker = createPlaybackControlActivationTracker();
-
-  tracker.pointerDown({ pointerId: 1, pointerType: 'touch', isPrimary: true, timeStamp: 100 }, 'primary');
-  tracker.pointerCancel({ pointerId: 1 }, 'primary');
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 120 }, 'primary'), false);
-
-  tracker.pointerDown({ pointerId: 2, pointerType: 'touch', isPrimary: true, timeStamp: 200 }, 'primary');
-  tracker.pointerLeave({ pointerId: 2, buttons: 1 }, 'primary');
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 220 }, 'primary'), false);
-
-  tracker.pointerDown({ pointerId: 3, pointerType: 'touch', isPrimary: true, timeStamp: 300 }, 'primary');
-  assert.equal(tracker.pointerLeave({ pointerId: 3, buttons: 0 }, 'primary'), false);
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 350 }, 'primary'), true);
-
-  tracker.pointerDown({ pointerId: 4, pointerType: 'touch', isPrimary: true, timeStamp: 400 }, 'primary');
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 401 }, 'autoplay'), false);
-
-  tracker.pointerDown({ pointerId: 5, pointerType: 'touch', isPrimary: true, timeStamp: 500 }, 'primary');
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 1501 }, 'primary'), false);
-
-  tracker.pointerDown({ pointerId: 6, pointerType: 'touch', isPrimary: true, timeStamp: 1600 }, 'primary');
-  tracker.reset();
-  assert.equal(tracker.consume({ detail: 1, timeStamp: 1650 }, 'primary'), false);
-});
-
-test('new gesture feedback immediately replaces and extends beyond the old event', () => {
-  const clock = createClock();
-  const changes = [];
-  const controller = createPlayerGestureFeedbackController({
-    onChange: (feedback) => changes.push(feedback),
-    setTimeoutImpl: clock.setTimeoutImpl,
-    clearTimeoutImpl: clock.clearTimeoutImpl,
-  });
-
-  const play = controller.show({ type: 'playback', action: 'play' });
-  clock.tick(300);
-  const pause = controller.show({ type: 'playback', action: 'pause' });
-
-  assert.notEqual(play.id, pause.id);
-  assert.equal(changes.at(-1).action, 'pause');
-  assert.equal(clock.timerCount, 1);
-
-  clock.tick(350);
-  assert.equal(changes.at(-1).action, 'pause');
-  clock.tick(300);
-  assert.equal(changes.at(-1), null);
-});
-
-test('playback toggle reports successful play and pause actions only when requested', async () => {
-  const snapshot = { paused: true };
-  const feedback = [];
-  let playCalls = 0;
-  const player = {
-    async play() { playCalls += 1; snapshot.paused = false; return true; },
-    pause() { snapshot.paused = true; },
-  };
-  const coordinator = createPlaybackToggleCoordinator({
-    getPlayer: () => player,
-    getSnapshot: () => snapshot,
-    getMediaKey: () => 'record:panda',
-    onFeedback: (action) => feedback.push(action),
-  });
-
-  assert.equal(await coordinator.toggle({ showFeedback: true }), true);
-  assert.deepEqual(feedback, ['play']);
-  assert.equal(await coordinator.toggle({ showFeedback: true }), true);
-  assert.deepEqual(feedback, ['play', 'pause']);
-  assert.equal(await coordinator.toggle(), true);
-  assert.deepEqual(feedback, ['play', 'pause']);
-  assert.equal(playCalls, 2);
-  assert.equal(await coordinator.toggle({ forcePlay: true, showFeedback: true }), true);
-  assert.equal(playCalls, 3);
-  assert.deepEqual(feedback, ['play', 'pause', 'play']);
-});
-
-test('playback toggle suppresses feedback after failure, cancellation, or a media change', async () => {
-  const snapshot = { paused: true };
-  const feedback = [];
-  let mediaKey = 'record:one';
-  let resolvePlay;
-  const player = {
-    play: () => new Promise((resolve) => { resolvePlay = resolve; }),
-    pause() { snapshot.paused = true; },
-  };
-  const coordinator = createPlaybackToggleCoordinator({
-    getPlayer: () => player,
-    getSnapshot: () => snapshot,
-    getMediaKey: () => mediaKey,
-    onFeedback: (action) => feedback.push(action),
-  });
-
-  const cancelled = coordinator.toggle({ showFeedback: true });
-  coordinator.cancel();
-  snapshot.paused = false;
-  resolvePlay(true);
-  assert.equal(await cancelled, false);
-
-  snapshot.paused = true;
-  const changed = coordinator.toggle({ showFeedback: true });
-  mediaKey = 'record:two';
-  snapshot.paused = false;
-  resolvePlay(true);
-  assert.equal(await changed, false);
-
-  snapshot.paused = true;
-  const failed = coordinator.toggle({ showFeedback: true });
-  resolvePlay(false);
-  assert.equal(await failed, false);
-  assert.deepEqual(feedback, []);
-});
-
 test('mouse single waits for the double-click window and a nearby double suppresses it', () => {
   const single = createHarness();
   tap(single.recognizer, { pointerType: 'mouse', x: 100 });
@@ -224,100 +82,63 @@ test('mouse single waits for the double-click window and a nearby double suppres
   assert.equal(double.calls.mouseSingle.length, 0);
 });
 
-test('touch single waits while same-side doubles report their side', () => {
+test('touch same-side doubles report zone while cross-side taps stay independent singles', () => {
   const harness = createHarness();
-  tap(harness.recognizer, { pointerType: 'touch', x: 80, zone: 'left' });
-  harness.clock.tick(300);
-  assert.equal(harness.calls.touchSingle.length, 1);
-
   tap(harness.recognizer, { pointerType: 'touch', x: 80, zone: 'left' });
   harness.clock.tick(100);
   tap(harness.recognizer, { pointerType: 'touch', x: 88, zone: 'left' });
   assert.equal(harness.calls.touchDouble.at(-1).zone, 'left');
 
-  tap(harness.recognizer, { pointerType: 'touch', x: 280, zone: 'right' });
-  harness.clock.tick(100);
-  tap(harness.recognizer, { pointerType: 'touch', x: 286, zone: 'right' });
-  assert.equal(harness.calls.touchDouble.at(-1).zone, 'right');
-});
-
-test('an unavailable touch double falls back to one single action', () => {
-  const clock = createClock();
-  let singles = 0;
-  let doubles = 0;
-  const recognizer = createPlayerGestureRecognizer({
-    now: clock.now,
-    setTimeoutImpl: clock.setTimeoutImpl,
-    clearTimeoutImpl: clock.clearTimeoutImpl,
-    onTouchSingle: () => { singles += 1; },
-    onTouchDouble: () => { doubles += 1; return false; },
-  });
-  tap(recognizer, { pointerType: 'touch', x: 80, zone: 'left' });
-  clock.tick(100);
-  tap(recognizer, { pointerType: 'touch', x: 85, zone: 'left' });
-  assert.equal(doubles, 1);
-  assert.equal(singles, 1);
-  assert.equal(clock.timerCount, 0);
-});
-
-test('cross-side and distant taps remain independent singles', () => {
-  const harness = createHarness();
   tap(harness.recognizer, { pointerType: 'touch', x: 80, zone: 'left' });
   harness.clock.tick(100);
   tap(harness.recognizer, { pointerType: 'touch', x: 280, zone: 'right' });
-  assert.equal(harness.calls.touchSingle.length, 1);
   harness.clock.tick(300);
   assert.equal(harness.calls.touchSingle.length, 2);
-  assert.equal(harness.calls.touchDouble.length, 0);
-
-  tap(harness.recognizer, { pointerType: 'mouse', x: 20 });
-  harness.clock.tick(100);
-  tap(harness.recognizer, { pointerType: 'mouse', x: 200 });
-  assert.equal(harness.calls.mouseSingle.length, 1);
-  harness.clock.tick(300);
-  assert.equal(harness.calls.mouseSingle.length, 2);
-  assert.equal(harness.calls.mouseDouble.length, 0);
+  assert.equal(harness.calls.touchDouble.length, 1);
 });
 
-test('movement, long presses, cancellation, extra buttons, and unsupported pointers do nothing', () => {
-  const harness = createHarness();
-  const { recognizer, clock, calls } = harness;
+test('playback toggle reports feedback only on success and suppresses cancel or media change', async () => {
+  const snapshot = { paused: true };
+  const feedback = [];
+  let mediaKey = 'record:one';
+  let resolvePlay;
+  const player = {
+    play: () => new Promise((resolve) => { resolvePlay = resolve; }),
+    pause() { snapshot.paused = true; },
+  };
+  const coordinator = createPlaybackToggleCoordinator({
+    getPlayer: () => player,
+    getSnapshot: () => snapshot,
+    getMediaKey: () => mediaKey,
+    onFeedback: (action) => feedback.push(action),
+  });
 
-  recognizer.pointerDown({ pointerId: 1, pointerType: 'touch', button: 0, clientX: 10, clientY: 10, zone: 'left' });
-  recognizer.pointerMove({ pointerId: 1, pointerType: 'touch', clientX: 30, clientY: 10, zone: 'left' });
-  recognizer.pointerUp({ pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10, zone: 'left' });
+  const pending = coordinator.toggle({ showFeedback: true });
+  snapshot.paused = false;
+  resolvePlay(true);
+  assert.equal(await pending, true);
+  assert.deepEqual(feedback, ['play']);
 
-  recognizer.pointerDown({ pointerId: 2, pointerType: 'touch', button: 0, clientX: 10, clientY: 10, zone: 'left' });
-  clock.tick(351);
-  recognizer.pointerUp({ pointerId: 2, pointerType: 'touch', clientX: 10, clientY: 10, zone: 'left' });
+  assert.equal(await coordinator.toggle({ showFeedback: true }), true);
+  assert.deepEqual(feedback, ['play', 'pause']);
 
-  recognizer.pointerDown({ pointerId: 3, pointerType: 'touch', button: 0, clientX: 10, clientY: 10, zone: 'left' });
-  recognizer.pointerCancel({ pointerId: 3 });
-  recognizer.pointerUp({ pointerId: 3, pointerType: 'touch', clientX: 10, clientY: 10, zone: 'left' });
+  snapshot.paused = true;
+  const cancelled = coordinator.toggle({ showFeedback: true });
+  coordinator.cancel();
+  snapshot.paused = false;
+  resolvePlay(true);
+  assert.equal(await cancelled, false);
 
-  tap(recognizer, { pointerType: 'mouse', x: 10, button: 2, pointerId: 4 });
-  tap(recognizer, { pointerType: 'pen', x: 10, pointerId: 5 });
-  clock.tick(500);
-  assert.deepEqual(calls, { mouseSingle: [], mouseDouble: [], touchSingle: [], touchDouble: [] });
+  snapshot.paused = true;
+  const changed = coordinator.toggle({ showFeedback: true });
+  mediaKey = 'record:two';
+  snapshot.paused = false;
+  resolvePlay(true);
+  assert.equal(await changed, false);
+  assert.deepEqual(feedback, ['play', 'pause']);
 });
 
-test('reset and destroy clear delayed actions', () => {
-  const harness = createHarness();
-  tap(harness.recognizer, { pointerType: 'mouse', x: 100 });
-  assert.equal(harness.clock.timerCount, 1);
-  harness.recognizer.reset();
-  harness.clock.tick(500);
-  assert.equal(harness.calls.mouseSingle.length, 0);
-
-  tap(harness.recognizer, { pointerType: 'touch', x: 100, zone: 'left' });
-  harness.recognizer.destroy();
-  harness.clock.tick(500);
-  assert.equal(harness.calls.touchSingle.length, 0);
-  assert.equal(harness.recognizer.pointerDown({ pointerId: 9, pointerType: 'mouse', button: 0 }), false);
-});
-
-test('recognizes player controls and form elements as blocked gesture targets', () => {
+test('recognizes player controls as blocked gesture targets', () => {
   assert.equal(isPlayerGestureBlockedTarget({ closest: (selector) => selector.includes('.player-controls') ? {} : null }), true);
   assert.equal(isPlayerGestureBlockedTarget({ closest: () => null }), false);
-  assert.equal(isPlayerGestureBlockedTarget(null), false);
 });

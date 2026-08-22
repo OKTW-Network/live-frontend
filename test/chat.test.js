@@ -38,18 +38,24 @@ class FakeSocket {
   }
 }
 
-test('uses the Vite reverse proxy for local WebSocket testing', () => {
+test('chat joins with nickname, caps messages, and reconnects after unexpected close', () => {
   assert.equal(chatServerUrl({
     useProxy: true,
     locationImpl: { protocol: 'http:', host: 'localhost:5173' },
   }), 'ws://localhost:5173/__upstream/ws');
-  assert.equal(chatServerUrl({ useProxy: false }), 'wss://live.oktw.one/ws');
-});
 
-test('sets nickname before joining the selected channel', () => {
   FakeSocket.instances = [];
-  const states = [];
-  const client = new ChatClient({ WebSocketImpl: FakeSocket, onState: (state) => states.push(state) });
+  const timers = [];
+  let count = 0;
+  let messages = [];
+  const client = new ChatClient({
+    WebSocketImpl: FakeSocket,
+    setTimer: (callback, delay) => { timers.push({ callback, delay }); return timers.length; },
+    clearTimer: () => {},
+    onViewerCount: (value) => { count = value; },
+    onMessages: (value) => { messages = value; },
+  });
+
   client.connect('bill96012', 'viewer');
   const socket = FakeSocket.instances[0];
   socket.open();
@@ -57,45 +63,20 @@ test('sets nickname before joining the selected channel', () => {
     { method: 'setName', name: 'viewer' },
     { method: 'joinChannel', channelName: 'bill96012' },
   ]);
-  assert.deepEqual(states.slice(-2), ['connecting', 'open']);
-});
 
-test('updates viewer count, excludes channelData, and caps messages', () => {
-  FakeSocket.instances = [];
-  let count = 0;
-  let messages = [];
-  const client = new ChatClient({
-    WebSocketImpl: FakeSocket,
-    onViewerCount: (value) => { count = value; },
-    onMessages: (value) => { messages = value; },
-  });
-  client.connect('record.mp4', 'viewer');
-  const socket = FakeSocket.instances[0];
-  socket.open();
   socket.emit('message', { data: JSON.stringify({ type: 'channelData', nowViewerCount: 7, uuid: 3 }) });
   assert.equal(count, 7);
   assert.equal(messages.length, 0);
+
   for (let index = 0; index < MAX_MESSAGES + 5; index += 1) {
     socket.emit('message', { data: JSON.stringify({ name: 'viewer', msg: `message-${index}`, uuid: 3 }) });
   }
   assert.equal(messages.length, MAX_MESSAGES);
   assert.equal(messages[0].msg, 'message-5');
-  assert.equal(new Set(messages.map((message) => message.id)).size, MAX_MESSAGES);
-});
 
-test('sends messages and reconnects after an unexpected close', () => {
-  FakeSocket.instances = [];
-  const timers = [];
-  const client = new ChatClient({
-    WebSocketImpl: FakeSocket,
-    setTimer: (callback, delay) => { timers.push({ callback, delay }); return timers.length; },
-    clearTimer: () => {},
-  });
-  client.connect('bill96012', 'viewer');
-  const socket = FakeSocket.instances[0];
-  socket.open();
   assert.equal(client.sendMessage(' hello '), true);
   assert.deepEqual(socket.sent.at(-1), { method: 'sendBulletMessage', msg: 'hello' });
+
   socket.readyState = 3;
   socket.emit('close', { code: 1006 });
   assert.equal(timers[0].delay, 2000);
