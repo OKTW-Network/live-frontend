@@ -143,47 +143,107 @@
 
           <div x-show="view === 'record' || (view === 'channel' && currentStreamer && liveStatuses[currentStreamer.name] === 'online')" class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
             <div class="min-w-0">
-              <div x-ref="playerContainer" @keydown.window="handlePlayerShortcut" @dblclick="if (!$event.target.closest('button, input, select, label')) player?.toggleFullscreen()" class="player-shell relative aspect-video overflow-hidden rounded-xl bg-black shadow-2xl shadow-black/15">
+              <div x-ref="playerContainer" @keydown.window="handlePlayerShortcut" @keydown.escape.window="closePlayerPopovers" @dblclick="if (!$event.target.closest('button, input, select, label')) player?.toggleFullscreen()" class="player-shell relative aspect-video overflow-hidden rounded-xl bg-black shadow-2xl shadow-black/15">
                 <video x-ref="video" muted playsinline preload="metadata" class="size-full bg-black object-contain"></video>
                 <template x-if="view === 'record' && currentRecord && !playerSnapshot.hasPlayed && !posterFailed"><img :src="thumbnailUrl(currentRecord.filename, posterExt)" @error="const next = nextThumbnailExtension(posterExt); if (next) posterExt = next; else posterFailed = true" alt="直播紀錄預覽" class="pointer-events-none absolute inset-0 z-10 size-full object-cover opacity-65" /></template>
                 <div x-show="view === 'record' && currentRecord && !playerSnapshot.hasPlayed && posterFailed" class="pointer-events-none absolute inset-0 z-10 bg-[#080809]"></div>
 
                 <div x-show="playerMessage()" class="pointer-events-none absolute inset-x-4 top-4 z-30 flex justify-center" aria-live="polite"><div class="max-w-lg rounded-full bg-black/75 px-4 py-2 text-center text-xs font-bold text-white backdrop-blur" x-text="playerMessage()"></div></div>
-                <button x-show="playerSnapshot.autoplayState === 'blocked'" type="button" @click="player?.play()" class="absolute left-1/2 top-1/2 z-30 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white text-3xl text-black shadow-xl focus-visible:outline focus-visible:outline-4 focus-visible:outline-white/60" aria-label="開始播放直播">▶</button>
+                <button x-show="playerSnapshot.autoplayState === 'blocked'" type="button" @click="player?.play()" class="absolute left-1/2 top-1/2 z-30 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white text-black shadow-xl focus-visible:outline focus-visible:outline-4 focus-visible:outline-white/60" aria-label="開始播放直播">
+                  <svg data-heroicon="play" class="size-9" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
+                </button>
                 <button x-show="['offline', 'error'].includes(playerSnapshot.playerState)" type="button" @click="retryPlayer" class="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white px-5 py-3 text-sm font-black text-black">重新嘗試</button>
 
-                <div x-show="shareOpen" x-cloak @click.outside="shareOpen = false" class="player-popover absolute bottom-20 right-3 z-40 w-80 max-w-[calc(100%_-_1.5rem)] rounded-xl border border-white/15 bg-black/95 p-4 text-white shadow-2xl" role="dialog" aria-label="分享播放器">
-                  <div class="flex items-center justify-between gap-3"><strong class="text-sm">分享</strong><button type="button" @click="shareOpen = false" class="player-icon-button" aria-label="關閉分享面板">×</button></div>
-                  <label x-show="view === 'record'" class="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" x-model="shareIncludeTime" class="size-4 accent-white" /><span>包含目前時間</span></label>
-                  <button type="button" @click="submitShare" class="mt-4 w-full rounded-lg bg-white px-4 py-2.5 text-sm font-black text-black">分享或複製連結</button>
-                  <p x-show="playerSnapshot.shareStatus" class="mt-3 text-xs text-white/70" x-text="playerSnapshot.shareStatus" aria-live="polite"></p>
+                <div id="player-settings-panel" x-show="settingsOpen" x-cloak @click.outside="settingsOpen = false" class="player-settings-panel absolute bottom-16 right-3 z-40 w-80 max-w-[calc(100%_-_1.5rem)] rounded-xl border border-white/15 bg-black/95 p-4 text-white shadow-2xl" role="dialog" aria-labelledby="player-settings-title">
+                  <div class="flex items-center justify-between gap-3">
+                    <strong id="player-settings-title" class="text-sm">播放設定</strong>
+                    <button type="button" @click="settingsOpen = false" class="player-icon-button" aria-label="關閉播放設定">
+                      <svg data-heroicon="x-mark" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                  <div class="mt-3 divide-y divide-white/10">
+                    <label class="player-setting-row" :title="playerSnapshot.boostAvailable ? '允許最高 200% 音量' : playerSnapshot.boostUnavailableReason">
+                      <span><strong>音量增強</strong><small x-text="playerSnapshot.boostAvailable ? '最高可調整至 200%' : playerSnapshot.boostUnavailableReason"></small></span>
+                      <input type="checkbox" :checked="playerSnapshot.boostEnabled" :disabled="!playerSnapshot.boostAvailable" @change="changePlayerBoost" aria-label="音量增強" />
+                    </label>
+                    <label class="player-setting-row" for="player-rate">
+                      <span><strong>播放速度</strong><small>選擇固定播放倍率</small></span>
+                      <select id="player-rate" :value="playerSnapshot.selectedRate" @change="changePlayerRate" class="player-select" aria-label="播放速度"><template x-for="rate in playerRates" :key="rate"><option :value="rate" x-text="`${rate}x`"></option></template></select>
+                    </label>
+                    <div x-show="playerSnapshot.mode === 'live'" class="player-setting-row">
+                      <span><strong>自動追趕</strong><small x-text="playerSnapshot.catchUpActive ? '1.25x 追趕中' : '在直播延遲時自動追趕'"></small></span>
+                      <input type="checkbox" :checked="playerSnapshot.autoCatchUp" @change="changeAutoCatchUp" aria-label="自動追趕" />
+                    </div>
+                    <button x-show="playerSnapshot.mode === 'live'" type="button" @click="player?.goLive()" :disabled="!playerSnapshot.buffered.length" class="player-setting-action">
+                      <svg data-heroicon="signal" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.348 14.652a3.75 3.75 0 0 1 0-5.304m5.304 0a3.75 3.75 0 0 1 0 5.304m-7.425 2.121a6.75 6.75 0 0 1 0-9.546m9.546 0a6.75 6.75 0 0 1 0 9.546M5.106 18.894c-3.808-3.807-3.808-9.98 0-13.788m13.788 0c3.808 3.807 3.808 9.98 0 13.788M12 12h.008v.008H12V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
+                      <span>追上直播</span>
+                    </button>
+                    <button type="button" @click="togglePictureInPicture" :disabled="!playerSnapshot.capabilities.pictureInPicture" class="player-setting-action" :aria-pressed="playerSnapshot.pip">
+                      <svg data-heroicon="rectangle-stack" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122" /></svg>
+                      <span x-text="playerSnapshot.pip ? '關閉子母畫面' : '開啟子母畫面'"></span>
+                    </button>
+                    <button type="button" @click="toggleDebug" class="player-setting-action" :aria-expanded="debugOpen" aria-controls="player-debug-panel">
+                      <svg data-heroicon="bug-ant" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 12.75c1.148 0 2.278.08 3.383.237 1.037.146 1.866.966 1.866 2.013 0 3.728-2.35 6.75-5.25 6.75S6.75 18.728 6.75 15c0-1.046.83-1.867 1.866-2.013A24.204 24.204 0 0 1 12 12.75Zm0 0c2.883 0 5.647.508 8.207 1.44a23.91 23.91 0 0 1-1.152 6.06M12 12.75c-2.883 0-5.647.508-8.208 1.44.125 2.104.52 4.136 1.153 6.06M12 12.75a2.25 2.25 0 0 0 2.248-2.354M12 12.75a2.25 2.25 0 0 1-2.248-2.354M12 8.25c.995 0 1.971-.08 2.922-.236.403-.066.74-.358.795-.762a3.778 3.778 0 0 0-.399-2.25M12 8.25c-.995 0-1.97-.08-2.922-.236-.402-.066-.74-.358-.795-.762a3.734 3.734 0 0 1 .4-2.253M12 8.25a2.25 2.25 0 0 0-2.248 2.146M12 8.25a2.25 2.25 0 0 1 2.248 2.146M8.683 5a6.032 6.032 0 0 1-1.155-1.002c.07-.63.27-1.222.574-1.747m.581 2.749A3.75 3.75 0 0 1 15.318 5m0 0c.427-.283.815-.62 1.155-.999a4.471 4.471 0 0 0-.575-1.752M4.921 6a24.048 24.048 0 0 0-.392 3.314c1.668.546 3.416.914 5.223 1.082M19.08 6c.205 1.08.337 2.187.392 3.314a23.882 23.882 0 0 1-5.223 1.082" /></svg>
+                      <span x-text="debugOpen ? '收合 Debug' : '開啟 Debug'"></span>
+                    </button>
+                  </div>
                 </div>
 
                 <div class="player-controls absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/90 to-transparent px-3 pb-3 pt-10 text-white">
+                  <div class="player-actions player-primary-actions" aria-label="主要播放控制">
+                    <button type="button" @click="togglePlayback" class="player-icon-button" :aria-label="playerSnapshot.paused ? '播放' : '暫停'">
+                      <svg x-show="playerSnapshot.paused" data-heroicon="play" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
+                      <svg x-show="!playerSnapshot.paused" x-cloak data-heroicon="pause" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
+                    </button>
+                    <div class="flex min-w-0 items-center gap-1">
+                      <button type="button" @click="toggleMute" class="player-icon-button" :aria-label="playerSnapshot.muted ? '開啟聲音' : '靜音'" :aria-pressed="playerSnapshot.muted">
+                        <svg x-show="playerSnapshot.muted" data-heroicon="speaker-x-mark" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75 19.5 12m0 0 2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6 4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg>
+                        <svg x-show="!playerSnapshot.muted" x-cloak data-heroicon="speaker-wave" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg>
+                      </button>
+                      <label class="sr-only" for="player-volume">音量</label>
+                      <input id="player-volume" type="range" min="0" :max="playerSnapshot.boostEnabled && playerSnapshot.boostAvailable ? 200 : 100" step="1" :value="playerSnapshot.volumePercent" @input="changePlayerVolume" :aria-valuetext="`${Math.round(playerSnapshot.volumePercent)}%`" class="player-range w-20" />
+                      <span class="w-9 text-right text-[10px] font-bold tabular-nums text-white/70" x-text="`${Math.round(playerSnapshot.volumePercent)}%`"></span>
+                    </div>
+                  </div>
                   <div class="player-progress-row">
                     <label class="sr-only" for="player-timeline">播放進度</label>
                     <input id="player-timeline" type="range" :min="playerSnapshot.timelineStart" :max="Math.max(playerSnapshot.timelineStart, playerSnapshot.timelineEnd)" step="0.01" :value="Math.min(Math.max(playerSnapshot.currentTime, playerSnapshot.timelineStart), Math.max(playerSnapshot.timelineStart, playerSnapshot.timelineEnd))" :disabled="!playerSnapshot.canSeek" @input="seekPlayer" :aria-valuetext="playerTimeLabel()" class="player-range min-w-24 flex-1" />
                     <output class="shrink-0 text-[11px] font-bold tabular-nums text-white/80" x-text="playerTimeLabel()"></output>
                   </div>
+                  <div class="player-actions player-secondary-actions" aria-label="檢視控制">
+                    <button type="button" @click="player?.toggleFullscreen()" :disabled="!playerSnapshot.capabilities.fullscreen" class="player-icon-button" :aria-label="playerSnapshot.fullscreen ? '離開全螢幕' : '進入全螢幕'" :aria-pressed="playerSnapshot.fullscreen">
+                      <svg x-show="!playerSnapshot.fullscreen" data-heroicon="arrows-pointing-out" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
+                      <svg x-show="playerSnapshot.fullscreen" x-cloak data-heroicon="arrows-pointing-in" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" /></svg>
+                    </button>
+                    <button type="button" @click="toggleSettings" class="player-icon-button" aria-label="播放設定" aria-haspopup="dialog" :aria-expanded="settingsOpen" aria-controls="player-settings-panel">
+                      <svg data-heroicon="cog-6-tooth" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
 
-                  <div class="player-actions" aria-label="播放器控制">
-                    <button type="button" @click="togglePlayback" class="player-icon-button" :aria-label="playerSnapshot.paused ? '播放' : '暫停'" x-text="playerSnapshot.paused ? '▶' : 'Ⅱ'"></button>
-                    <div class="flex shrink-0 items-center gap-1">
-                      <button type="button" @click="toggleMute" class="player-icon-button" :aria-label="playerSnapshot.muted ? '開啟聲音' : '靜音'" :aria-pressed="playerSnapshot.muted" x-text="playerSnapshot.muted ? '🔇' : '🔊'"></button>
-                      <label class="sr-only" for="player-volume">音量</label>
-                      <input id="player-volume" type="range" min="0" :max="playerSnapshot.boostEnabled && playerSnapshot.boostAvailable ? 200 : 100" step="1" :value="playerSnapshot.volumePercent" @input="changePlayerVolume" :aria-valuetext="`${Math.round(playerSnapshot.volumePercent)}%`" class="player-range w-20" />
-                      <span class="w-9 text-right text-[10px] font-bold tabular-nums text-white/70" x-text="`${Math.round(playerSnapshot.volumePercent)}%`"></span>
+              <div id="player-title-block" class="relative mt-5 border-b border-[var(--line)] pb-6">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0 flex-1">
+                    <template x-if="view === 'channel' && currentStreamer"><div><p class="flex items-center gap-2 text-xs font-black tracking-[0.14em] text-[var(--live)]"><span class="size-2 rounded-full bg-[var(--live)]"></span> LIVE CHANNEL</p><h2 class="mt-2 break-all text-2xl font-black" x-text="currentStreamer.name"></h2><p class="mt-2 text-sm text-[var(--muted)]">直播會以靜音自動播放；可隨時開啟聲音或回看 DVR。</p></div></template>
+                    <template x-if="view === 'record' && currentRecord"><div><p class="eyebrow">REPLAY</p><h1 class="mt-2 break-all text-xl font-black sm:text-2xl" x-text="currentRecord.filename"></h1><dl class="mt-4 flex flex-wrap gap-x-7 gap-y-3 text-sm"><div><dt class="text-xs text-[var(--muted)]">主播</dt><dd class="mt-1 font-black" x-text="currentRecord.streamer"></dd></div><div><dt class="text-xs text-[var(--muted)]">直播時間（Asia/Taipei）</dt><dd class="mt-1 font-black" x-text="formatDate(currentRecord.timestamp)"></dd></div><div><dt class="text-xs text-[var(--muted)]">直播長度</dt><dd class="mt-1 font-black" x-text="formatDuration(currentRecord.duration)"></dd></div><div><dt class="text-xs text-[var(--muted)]">檔案大小</dt><dd class="mt-1 font-black" x-text="formatBytes(currentRecord.size)"></dd></div></dl><div class="mt-4 flex flex-wrap gap-4"><a :href="streamerPath(currentRecord.streamer)" class="text-sm font-black hover:underline">前往主播頻道 →</a><a :href="recordUrl(currentRecord.filename)" target="_blank" rel="noreferrer" class="text-sm font-black hover:underline">直接開啟檔案 ↗</a></div></div></template>
+                  </div>
+                  <div class="relative shrink-0" @click.outside="shareOpen = false">
+                    <button type="button" @click="toggleShare" class="player-title-action" aria-label="分享" aria-haspopup="dialog" :aria-expanded="shareOpen" aria-controls="player-share-panel">
+                      <svg data-heroicon="share" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
+                      <span>分享</span>
+                    </button>
+                    <div id="player-share-panel" x-show="shareOpen" x-cloak class="player-share-panel absolute right-0 top-12 z-40 w-80 max-w-[calc(100vw_-_2rem)] rounded-xl border border-[var(--line)] bg-[var(--panel)] p-4 text-[var(--ink)] shadow-2xl" role="dialog" aria-labelledby="player-share-title">
+                      <div class="flex items-center justify-between gap-3">
+                        <strong id="player-share-title" class="text-sm">分享</strong>
+                        <button type="button" @click="shareOpen = false" class="player-title-icon" aria-label="關閉分享面板">
+                          <svg data-heroicon="x-mark" class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                        </button>
+                      </div>
+                      <label x-show="view === 'record'" class="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" x-model="shareIncludeTime" class="size-4 accent-[var(--ink)]" /><span>包含目前時間</span></label>
+                      <button type="button" @click="submitShare" class="mt-4 w-full rounded-lg bg-[var(--ink)] px-4 py-2.5 text-sm font-black text-[var(--page)]">分享或複製連結</button>
+                      <p x-show="playerSnapshot.shareStatus" class="mt-3 text-xs text-[var(--muted)]" x-text="playerSnapshot.shareStatus" aria-live="polite"></p>
                     </div>
-                    <label class="player-toggle" :title="playerSnapshot.boostAvailable ? '允許最高 200% 音量' : playerSnapshot.boostUnavailableReason"><input type="checkbox" :checked="playerSnapshot.boostEnabled" :disabled="!playerSnapshot.boostAvailable" @change="changePlayerBoost" /><span>增強</span></label>
-                    <label class="sr-only" for="player-rate">播放速度</label>
-                    <select id="player-rate" :value="playerSnapshot.selectedRate" @change="changePlayerRate" class="player-select" aria-label="播放速度"><template x-for="rate in playerRates" :key="rate"><option :value="rate" x-text="`${rate}x`"></option></template></select>
-                    <span x-show="playerSnapshot.catchUpActive" class="shrink-0 rounded bg-amber-400/20 px-2 py-1 text-[10px] font-black text-amber-200">1.25x 追趕中</span>
-                    <label x-show="playerSnapshot.mode === 'live'" class="player-toggle"><input type="checkbox" :checked="playerSnapshot.autoCatchUp" @change="changeAutoCatchUp" /><span>自動追趕</span></label>
-                    <button x-show="playerSnapshot.mode === 'live'" type="button" @click="player?.goLive()" :disabled="!playerSnapshot.buffered.length" class="player-text-button">追上直播</button>
-                    <button type="button" @click="toggleShare" class="player-icon-button" aria-label="分享" :aria-expanded="shareOpen">↗</button>
-                    <button type="button" @click="player?.togglePictureInPicture()" :disabled="!playerSnapshot.capabilities.pictureInPicture" class="player-text-button" :aria-pressed="playerSnapshot.pip">PiP</button>
-                    <button type="button" @click="player?.toggleFullscreen()" :disabled="!playerSnapshot.capabilities.fullscreen" class="player-icon-button" :aria-label="playerSnapshot.fullscreen ? '離開全螢幕' : '進入全螢幕'" :aria-pressed="playerSnapshot.fullscreen">⛶</button>
-                    <button type="button" @click="toggleDebug" class="player-text-button" :aria-expanded="debugOpen" aria-controls="player-debug-panel">Debug</button>
                   </div>
                 </div>
               </div>
@@ -205,11 +265,6 @@
                 <p x-show="debugCopyStatus" class="border-b border-[var(--line)] px-4 py-2 text-xs font-bold" x-text="debugCopyStatus" aria-live="polite"></p>
                 <ol x-ref="debugLog" class="debug-log max-h-80 overflow-auto font-mono text-[11px]"><template x-for="entry in debugEntries" :key="entry.sequence"><li class="grid gap-x-3 border-b border-[var(--line)] px-3 py-2 last:border-0 sm:grid-cols-[4rem_6rem_5rem_9rem_1fr]"><span class="text-[var(--muted)]" x-text="`#${entry.sequence}`"></span><time class="text-[var(--muted)]" x-text="entry.time.slice(11, 23)"></time><span class="font-black uppercase" x-text="entry.level"></span><span class="font-bold" x-text="`${entry.source}:${entry.event}`"></span><code class="break-all text-[var(--muted)]" x-text="formatDebugPayload(entry)"></code></li></template><li x-show="!debugEntries.length" class="px-4 py-8 text-center text-[var(--muted)]">沒有符合篩選條件的事件。</li></ol>
               </section>
-
-              <div class="mt-5 border-b border-[var(--line)] pb-6">
-                <template x-if="view === 'channel' && currentStreamer"><div><p class="flex items-center gap-2 text-xs font-black tracking-[0.14em] text-[var(--live)]"><span class="size-2 rounded-full bg-[var(--live)]"></span> LIVE CHANNEL</p><h2 class="mt-2 break-all text-2xl font-black" x-text="currentStreamer.name"></h2><p class="mt-2 text-sm text-[var(--muted)]">直播會以靜音自動播放；可隨時開啟聲音或回看 DVR。</p></div></template>
-                <template x-if="view === 'record' && currentRecord"><div><p class="eyebrow">REPLAY</p><h1 class="mt-2 break-all text-xl font-black sm:text-2xl" x-text="currentRecord.filename"></h1><dl class="mt-4 flex flex-wrap gap-x-7 gap-y-3 text-sm"><div><dt class="text-xs text-[var(--muted)]">主播</dt><dd class="mt-1 font-black" x-text="currentRecord.streamer"></dd></div><div><dt class="text-xs text-[var(--muted)]">直播時間（Asia/Taipei）</dt><dd class="mt-1 font-black" x-text="formatDate(currentRecord.timestamp)"></dd></div><div><dt class="text-xs text-[var(--muted)]">直播長度</dt><dd class="mt-1 font-black" x-text="formatDuration(currentRecord.duration)"></dd></div><div><dt class="text-xs text-[var(--muted)]">檔案大小</dt><dd class="mt-1 font-black" x-text="formatBytes(currentRecord.size)"></dd></div></dl><div class="mt-4 flex flex-wrap gap-4"><a :href="streamerPath(currentRecord.streamer)" class="text-sm font-black hover:underline">前往主播頻道 →</a><a :href="recordUrl(currentRecord.filename)" target="_blank" rel="noreferrer" class="text-sm font-black hover:underline">直接開啟檔案 ↗</a></div></div></template>
-              </div>
             </div>
 
             <aside id="watch-chat" class="flex flex-col overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)] xl:h-[calc(min(56.25vw,54rem)+7rem)] xl:max-h-[46rem]">

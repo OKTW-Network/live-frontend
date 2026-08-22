@@ -93,6 +93,7 @@ a, button, input, select { outline-offset: 4px; }
 
 .player-controls {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: .6rem;
 }
 
@@ -105,11 +106,12 @@ a, button, input, select { outline-offset: 4px; }
 }
 
 .player-actions {
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scrollbar-color: rgb(255 255 255 / .35) transparent;
-  scrollbar-width: thin;
+  flex: 0 0 auto;
 }
+
+.player-progress-row { grid-column: 1 / -1; grid-row: 1; }
+.player-primary-actions { grid-column: 1; grid-row: 2; }
+.player-secondary-actions { grid-column: 2; grid-row: 2; justify-self: end; }
 
 .player-range {
   height: 1.25rem;
@@ -150,8 +152,7 @@ a, button, input, select { outline-offset: 4px; }
   background: #fff;
 }
 
-.player-icon-button,
-.player-text-button {
+.player-icon-button {
   display: inline-grid;
   min-height: 2rem;
   flex: 0 0 auto;
@@ -166,18 +167,18 @@ a, button, input, select { outline-offset: 4px; }
 }
 
 .player-icon-button { width: 2rem; font-size: .95rem; }
-.player-text-button { padding: 0 .55rem; }
-.player-icon-button:hover,
-.player-text-button:hover { background: rgb(255 255 255 / .15); }
+.player-icon-button svg,
+.player-setting-action svg,
+.player-title-action svg,
+.player-title-icon svg { flex: 0 0 auto; }
+.player-icon-button:hover { background: rgb(255 255 255 / .15); }
 .player-icon-button:focus-visible,
-.player-text-button:focus-visible,
 .player-range:focus-visible,
-.player-select:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.player-icon-button:disabled,
-.player-text-button:disabled { cursor: not-allowed; opacity: .35; }
+.player-select:focus-visible,
+.player-setting-action:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.player-icon-button:disabled { cursor: not-allowed; opacity: .35; }
 
-.player-select,
-.player-toggle {
+.player-select {
   min-height: 2rem;
   flex: 0 0 auto;
   border: 1px solid rgb(255 255 255 / .2);
@@ -191,16 +192,71 @@ a, button, input, select { outline-offset: 4px; }
 .player-select { padding: 0 1.6rem 0 .55rem; }
 .player-select option { color: #111; }
 
-.player-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: .35rem;
-  padding: 0 .5rem;
-  white-space: nowrap;
+.player-settings-panel {
+  max-height: calc(100% - 4.5rem);
+  overflow-y: auto;
+  scrollbar-color: rgb(255 255 255 / .35) transparent;
+  scrollbar-width: thin;
 }
 
-.player-toggle:has(input:disabled) { cursor: not-allowed; opacity: .35; }
-.player-toggle input { width: .85rem; height: .85rem; accent-color: #fff; }
+.player-setting-row,
+.player-setting-action {
+  display: flex;
+  width: 100%;
+  min-height: 3.35rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #fff;
+  text-align: left;
+}
+
+.player-setting-row > span {
+  display: grid;
+  min-width: 0;
+  gap: .15rem;
+}
+
+.player-setting-row strong { font-size: .75rem; }
+.player-setting-row small { color: rgb(255 255 255 / .6); font-size: .65rem; }
+.player-setting-row > input { width: 1rem; height: 1rem; flex: 0 0 auto; accent-color: #fff; }
+.player-setting-row:has(input:disabled) { cursor: not-allowed; opacity: .4; }
+
+.player-setting-action {
+  justify-content: flex-start;
+  border-radius: .45rem;
+  padding: 0 .35rem;
+  font-size: .75rem;
+  font-weight: 900;
+}
+
+.player-setting-action:hover { background: rgb(255 255 255 / .12); }
+.player-setting-action:disabled { cursor: not-allowed; opacity: .35; }
+
+.player-title-action,
+.player-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: .55rem;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.player-title-action {
+  min-height: 2.6rem;
+  gap: .45rem;
+  padding: 0 .8rem;
+  font-size: .75rem;
+  font-weight: 900;
+}
+
+.player-title-icon { width: 2rem; height: 2rem; border-color: transparent; }
+.player-title-action:hover,
+.player-title-icon:hover { background: var(--soft); }
+.player-title-action:focus-visible,
+.player-title-icon:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .debug-summary {
   display: grid;
@@ -237,7 +293,17 @@ a, button, input, select { outline-offset: 4px; }
   }
 
   .player-progress-row { min-width: 12rem; flex: 1 1 16rem; }
-  .player-actions { flex: 0 1 auto; }
+  .player-actions { flex: 0 0 auto; }
+}
+
+@media (max-width: 639px) {
+  .player-settings-panel {
+    position: fixed;
+    inset: auto 1rem max(1rem, env(safe-area-inset-bottom));
+    width: auto;
+    max-width: none;
+    max-height: min(70vh, 30rem);
+  }
 }
 
 @keyframes live-pulse {

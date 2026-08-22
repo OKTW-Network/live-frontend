@@ -125,6 +125,7 @@ function registerApp(Alpine) {
       capabilities: { boost: false, pictureInPicture: false, fullscreen: false, share: false },
     },
     playerRates: PLAYER_RATES,
+    settingsOpen: false,
     shareOpen: false,
     shareIncludeTime: true,
     debugOpen: false,
@@ -475,6 +476,7 @@ function registerApp(Alpine) {
       this.chatMessages = [];
       this.chatViewerCount = 0;
       this.chatDraft = '';
+      this.settingsOpen = false;
       this.shareOpen = false;
       this.debugOpen = false;
       this.debugEntries = [];
@@ -541,7 +543,23 @@ function registerApp(Alpine) {
 
     toggleShare() {
       this.shareOpen = !this.shareOpen;
+      this.settingsOpen = false;
       if (this.shareOpen) this.shareIncludeTime = true;
+    },
+
+    toggleSettings() {
+      this.settingsOpen = !this.settingsOpen;
+      this.shareOpen = false;
+    },
+
+    closePlayerPopovers() {
+      this.settingsOpen = false;
+      this.shareOpen = false;
+    },
+
+    async togglePictureInPicture() {
+      this.settingsOpen = false;
+      await this.player?.togglePictureInPicture();
     },
 
     async submitShare() {
@@ -550,6 +568,7 @@ function registerApp(Alpine) {
 
     toggleDebug() {
       this.debugOpen = !this.debugOpen;
+      this.settingsOpen = false;
       if (this.debugOpen) this.refreshDebug();
     },
 
