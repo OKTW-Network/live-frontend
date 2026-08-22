@@ -2,6 +2,7 @@
 /dist/
 /.wrangler/
 /coverage/
+/.playwright-cli/
 .DS_Store
 *.log
 .env*

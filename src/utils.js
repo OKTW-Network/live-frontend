@@ -49,12 +49,24 @@ export function deriveStreamers(records) {
         name: record.streamer,
         recordCount: 1,
         latestTimestamp: record.timestamp,
+        previewFilename: record.filename,
       });
     }
   }
   return [...streamers.values()].sort(
     (a, b) => b.latestTimestamp - a.latestTimestamp || a.name.localeCompare(b.name),
   );
+}
+
+export function selectLiveStreamers(streamers, statuses = {}) {
+  return streamers.filter((streamer) => statuses[streamer.name] === 'online');
+}
+
+export function orderStreamersByStatus(streamers, statuses = {}) {
+  return [...streamers].sort((a, b) => {
+    const liveDifference = Number(statuses[b.name] === 'online') - Number(statuses[a.name] === 'online');
+    return liveDifference || b.latestTimestamp - a.latestTimestamp || a.name.localeCompare(b.name);
+  });
 }
 
 export function filterRecords(records, { query = '', streamer = '', sort = 'newest' } = {}) {
@@ -68,29 +80,54 @@ export function filterRecords(records, { query = '', streamer = '', sort = 'newe
   return filtered;
 }
 
-export function paginate(items, page = 1, pageSize = PAGE_SIZE) {
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
-  const safePage = Math.min(totalPages, Math.max(1, Number(page) || 1));
-  const start = (safePage - 1) * pageSize;
+export function parseRecordQuery(value = '') {
+  const params = value instanceof URLSearchParams
+    ? value
+    : new URLSearchParams(String(value).replace(/^\?/, ''));
   return {
-    items: items.slice(start, start + pageSize),
-    page: safePage,
-    totalPages,
-    totalItems: items.length,
+    query: params.get('q') || '',
+    streamer: params.get('streamer') || '',
+    sort: params.get('sort') === 'oldest' ? 'oldest' : 'newest',
   };
 }
 
-const fullDateFormatter = new Intl.DateTimeFormat('zh-TW', {
+export function serializeRecordQuery(filters = {}) {
+  const normalized = parseRecordQuery(new URLSearchParams([
+    ['q', filters.query || ''],
+    ['streamer', filters.streamer || ''],
+    ['sort', filters.sort || ''],
+  ]));
+  const params = new URLSearchParams();
+  if (normalized.query) params.set('q', normalized.query);
+  if (normalized.streamer) params.set('streamer', normalized.streamer);
+  if (normalized.sort === 'oldest') params.set('sort', 'oldest');
+  return params.size ? `?${params.toString()}` : '';
+}
+
+export function createRecordViewSnapshot({ filters = {}, visibleCount = PAGE_SIZE, scrollY = 0 } = {}) {
+  return {
+    filters: parseRecordQuery(serializeRecordQuery(filters)),
+    visibleCount: Math.max(PAGE_SIZE, Math.floor(Number(visibleCount) || PAGE_SIZE)),
+    scrollY: Math.max(0, Number(scrollY) || 0),
+  };
+}
+
+export function recordViewSnapshotMatches(snapshot, filters) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  return serializeRecordQuery(snapshot.filters) === serializeRecordQuery(filters);
+}
+
+const fullDateFormatter = new Intl.DateTimeFormat('zh-TW-u-ca-gregory', {
   timeZone: 'Asia/Taipei',
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
-  hour12: false,
+  hourCycle: 'h23',
 });
 
-const shortDateFormatter = new Intl.DateTimeFormat('zh-TW', {
+const shortDateFormatter = new Intl.DateTimeFormat('zh-TW-u-ca-gregory', {
   timeZone: 'Asia/Taipei',
   year: 'numeric',
   month: 'short',
@@ -98,11 +135,13 @@ const shortDateFormatter = new Intl.DateTimeFormat('zh-TW', {
 });
 
 export function formatDate(timestamp) {
-  return fullDateFormatter.format(new Date(timestamp * 1000));
+  const value = Number(timestamp);
+  return Number.isFinite(value) ? fullDateFormatter.format(new Date(value * 1000)) : '—';
 }
 
 export function formatShortDate(timestamp) {
-  return shortDateFormatter.format(new Date(timestamp * 1000));
+  const value = Number(timestamp);
+  return Number.isFinite(value) ? shortDateFormatter.format(new Date(value * 1000)) : '—';
 }
 
 export function formatDuration(seconds) {
@@ -115,16 +154,14 @@ export function formatDuration(seconds) {
 
 export function formatBytes(bytes) {
   const value = Math.max(0, Number(bytes) || 0);
-  if (value < 1024) return `${value} B`;
-  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let size = value;
-  let unitIndex = -1;
-  do {
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
     size /= 1024;
     unitIndex += 1;
-  } while (size >= 1024 && unitIndex < units.length - 1);
-  const digits = size >= 100 ? 0 : size >= 10 ? 1 : 2;
-  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+  }
+  return `${new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 2 }).format(size)} ${units[unitIndex]}`;
 }
 
 export function encodePathSegment(value) {
@@ -143,12 +180,27 @@ export function streamerPath(streamer) {
   return `/@${encodePathSegment(streamer)}`;
 }
 
-export function livePath(streamer) {
-  return `/live/${encodePathSegment(streamer)}`;
-}
-
 export function recordPath(filename) {
   return `/record/${encodePathSegment(filename)}`;
+}
+
+export function parseRoute(pathname = '/') {
+  if (pathname === '/') return { view: 'home' };
+  if (pathname === '/records') return { view: 'records' };
+
+  const channelMatch = pathname.match(/^\/@([^/]+)$/);
+  if (channelMatch) {
+    const streamer = decodePathSegment(channelMatch[1]);
+    if (streamer) return { view: 'channel', streamer };
+  }
+
+  const recordMatch = pathname.match(/^\/record\/([^/]+)$/);
+  if (recordMatch) {
+    const filename = decodePathSegment(recordMatch[1]);
+    if (filename) return { view: 'record', filename };
+  }
+
+  return { view: 'notFound' };
 }
 
 export function liveUrl(streamer) {
@@ -160,7 +212,8 @@ export function recordUrl(filename) {
 }
 
 export function thumbnailUrl(filename, extension = 'jxl') {
-  return `${recordUrl(filename)}.${extension}`;
+  const basename = String(filename).replace(/\.[^.]+$/, '');
+  return `${API_BASE}/record/${encodePathSegment(basename)}.${extension}`;
 }
 
 export function nextThumbnailExtension(extension) {
@@ -199,25 +252,20 @@ export async function mapWithConcurrency(items, concurrency, worker) {
 }
 
 export function metadataForPath(pathname) {
-  const defaultDescription = '瀏覽實況主、播放直播與存檔，並在即時聊天室一起參與。';
-  if (pathname === '/') {
-    return { title: 'OKTW Live — 直播與存檔', description: defaultDescription, useSiteImage: true };
+  const defaultDescription = '瀏覽主播、觀看正在進行的直播與直播紀錄，並在即時聊天室一起參與。';
+  const route = parseRoute(pathname);
+  if (route.view === 'home') {
+    return { title: 'OKTW Live — 直播、主播與直播紀錄', description: defaultDescription };
   }
-  if (pathname === '/records') {
-    return { title: '全部存檔 — OKTW Live', description: '搜尋、篩選並播放 OKTW Live 的所有直播存檔。', useSiteImage: false };
+  if (route.view === 'records') {
+    return { title: '直播紀錄 — OKTW Live', description: '搜尋、篩選並播放 OKTW Live 的所有直播紀錄。' };
   }
-  if (pathname.startsWith('/@')) {
-    const streamer = decodePathSegment(pathname.slice(2));
-    if (streamer) return { title: `@${streamer} — OKTW Live`, description: `觀看 @${streamer} 的直播入口與過去存檔。`, useSiteImage: false };
+  if (route.view === 'channel') {
+    return { title: `${route.streamer} — OKTW Live`, description: `觀看 ${route.streamer} 的即時直播與過去直播紀錄。` };
   }
-  if (pathname.startsWith('/live/')) {
-    const streamer = decodePathSegment(pathname.slice(6));
-    if (streamer) return { title: `@${streamer} 直播 — OKTW Live`, description: `觀看 @${streamer} 的即時直播並參與聊天。`, useSiteImage: false };
+  if (route.view === 'record') {
+    const match = route.filename.match(filenamePattern);
+    if (match) return { title: `${match[1]} 直播紀錄 — OKTW Live`, description: `播放 ${route.filename} 直播紀錄。` };
   }
-  if (pathname.startsWith('/record/')) {
-    const filename = decodePathSegment(pathname.slice(8));
-    const match = filename?.match(filenamePattern);
-    if (filename && match) return { title: `${match[1]} 存檔 — OKTW Live`, description: `播放 ${filename} 直播存檔。`, useSiteImage: false };
-  }
-  return { title: '找不到頁面 — OKTW Live', description: defaultDescription, useSiteImage: false };
+  return { title: '找不到頁面 — OKTW Live', description: defaultDescription };
 }
