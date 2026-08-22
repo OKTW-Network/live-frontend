@@ -250,6 +250,9 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.match(html, /id="player-debug-panel"/);
   assert.match(html, /data-heroicon="play"/);
   assert.match(html, /data-heroicon="cog-6-tooth"/);
+  assert.match(html, /data-heroicon="chevron-down"/);
+  assert.match(html, /data-heroicon="chevron-up"/);
+  assert.doesNotMatch(html, /⌄/u);
   assert.doesNotMatch(html, /[▶Ⅱ🔇🔊⛶]/u);
 
   const settingsStart = html.indexOf('id="player-settings-panel"');
