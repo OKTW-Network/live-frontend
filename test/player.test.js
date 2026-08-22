@@ -1,65 +1,545 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPlayerController } from '../src/player.js';
+import { readFile } from 'node:fs/promises';
+import { createPlayerController, PLAYER_RATES } from '../src/player.js';
 
-class FakeVideo {
-  constructor(nativeHls = false) {
+class FakeEventTarget {
+  constructor() { this.listeners = new Map(); }
+  addEventListener(type, handler) {
+    const handlers = this.listeners.get(type) || [];
+    handlers.push(handler);
+    this.listeners.set(type, handlers);
+  }
+  removeEventListener(type, handler) {
+    this.listeners.set(type, (this.listeners.get(type) || []).filter((candidate) => candidate !== handler));
+  }
+  emit(type, detail = {}) {
+    for (const handler of [...(this.listeners.get(type) || [])]) handler({ type, target: this, ...detail });
+  }
+}
+
+class FakeTimeRanges {
+  constructor(ranges = []) { this.ranges = ranges; }
+  get length() { return this.ranges.length; }
+  start(index) { return this.ranges[index][0]; }
+  end(index) { return this.ranges[index][1]; }
+}
+
+class FakeVideo extends FakeEventTarget {
+  constructor({ nativeHls = false } = {}) {
+    super();
     this.nativeHls = nativeHls;
-    this.listeners = new Map();
+    this.attributes = new Map();
     this.src = '';
+    this.currentTime = 0;
+    this.duration = Number.NaN;
+    this.buffered = new FakeTimeRanges();
+    this.seekable = new FakeTimeRanges();
+    this.networkState = 0;
+    this.readyState = 0;
+    this.paused = true;
+    this.ended = false;
+    this.muted = false;
+    this.defaultMuted = false;
+    this.volume = 1;
+    this.playbackRate = 1;
+    this.playCalls = 0;
+    this.pauseCalls = 0;
+    this.loadCalls = 0;
+    this.playResults = [];
+    this.rejectedRates = new Set();
+    this.parentNode = null;
   }
   canPlayType() { return this.nativeHls ? 'probably' : ''; }
-  addEventListener(type, handler) { this.listeners.set(type, handler); }
-  removeEventListener(type) { this.listeners.delete(type); }
-  emit(type) { this.listeners.get(type)?.(); }
-  load() {}
-  pause() {}
-  removeAttribute(name) { if (name === 'src') this.src = ''; }
+  setAttribute(name, value = '') { this.attributes.set(name, value); }
+  removeAttribute(name) {
+    this.attributes.delete(name);
+    if (name === 'src') this.src = '';
+    if (name === 'crossorigin') this.crossOrigin = null;
+  }
+  load() { this.loadCalls += 1; }
+  pause() { this.pauseCalls += 1; this.paused = true; }
+  play() {
+    this.playCalls += 1;
+    const result = this.playResults.length ? this.playResults.shift() : true;
+    if (result instanceof Error) return Promise.reject(result);
+    this.paused = false;
+    return Promise.resolve(result);
+  }
+  set playbackRate(value) {
+    if (this.rejectedRates?.has(value)) throw new RangeError(`Rejected ${value}`);
+    this._playbackRate = value;
+  }
+  get playbackRate() { return this._playbackRate ?? 1; }
+  cloneNode() {
+    const clone = new FakeVideo({ nativeHls: this.nativeHls });
+    clone.attributes = new Map(this.attributes);
+    clone.muted = this.muted;
+    clone.defaultMuted = this.defaultMuted;
+    clone.volume = this.volume;
+    clone.playbackRate = this.playbackRate;
+    return clone;
+  }
+  requestPictureInPicture() { return Promise.resolve(); }
+}
+
+class FakeContainer extends FakeEventTarget {
+  constructor(video) {
+    super();
+    this.video = video;
+    video.parentNode = this;
+    this.fullscreenCalls = 0;
+  }
+  replaceChild(next, previous) {
+    assert.equal(previous, this.video);
+    this.video = next;
+    next.parentNode = this;
+    previous.parentNode = null;
+  }
+  requestFullscreen() { this.fullscreenCalls += 1; return Promise.resolve(); }
+}
+
+class FakeDocument extends FakeEventTarget {
+  constructor() {
+    super();
+    this.visibilityState = 'visible';
+    this.pictureInPictureEnabled = true;
+    this.pictureInPictureElement = null;
+    this.fullscreenEnabled = true;
+    this.fullscreenElement = null;
+    this.title = 'Test Player';
+  }
+  exitPictureInPicture() { this.pictureInPictureElement = null; return Promise.resolve(); }
+  exitFullscreen() { this.fullscreenElement = null; return Promise.resolve(); }
+}
+
+class FakeStorage {
+  constructor(values = {}) { this.values = new Map(Object.entries(values)); }
+  getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
+  setItem(key, value) { this.values.set(key, String(value)); }
+}
+
+class FakeAudioNode {
+  constructor() { this.connections = []; this.disconnected = false; }
+  connect(node) { this.connections.push(node); return node; }
+  disconnect() { this.disconnected = true; }
+}
+
+class FakeAudioContext extends FakeEventTarget {
+  static instances = [];
+  static failResume = false;
+  constructor() {
+    super();
+    this.state = 'suspended';
+    this.destination = {};
+    this.sources = [];
+    this.gains = [];
+    FakeAudioContext.instances.push(this);
+  }
+  createMediaElementSource(video) {
+    const node = new FakeAudioNode();
+    node.video = video;
+    this.sources.push(node);
+    return node;
+  }
+  createGain() {
+    const node = new FakeAudioNode();
+    node.gain = { value: 1 };
+    this.gains.push(node);
+    return node;
+  }
+  resume() {
+    if (FakeAudioContext.failResume) return Promise.reject(new Error('resume denied'));
+    this.state = 'running';
+    this.emit('statechange');
+    return Promise.resolve();
+  }
+  close() { this.state = 'closed'; this.emit('statechange'); return Promise.resolve(); }
 }
 
 class FakeHls {
-  static Events = { MANIFEST_PARSED: 'manifest', ERROR: 'error' };
+  static Events = { MANIFEST_PARSED: 'manifest', ERROR: 'error', LEVEL_LOADED: 'level-loaded' };
   static ErrorTypes = { NETWORK_ERROR: 'network', MEDIA_ERROR: 'media' };
   static instances = [];
   static isSupported() { return true; }
-  constructor() { this.handlers = new Map(); this.destroyed = false; FakeHls.instances.push(this); }
-  on(type, handler) { this.handlers.set(type, handler); }
-  emit(type, data) { this.handlers.get(type)?.(type, data); }
+  constructor(config) {
+    this.config = { ...config };
+    this.handlers = new Map();
+    this.destroyed = false;
+    this.latency = 4;
+    this.targetLatency = 3;
+    FakeHls.instances.push(this);
+  }
+  on(type, handler) {
+    const handlers = this.handlers.get(type) || [];
+    handlers.push(handler);
+    this.handlers.set(type, handlers);
+  }
+  emit(type, data = {}) { for (const handler of this.handlers.get(type) || []) handler(type, data); }
   loadSource(url) { this.url = url; }
-  attachMedia(video) { this.video = video; }
+  attachMedia(video) { this.video = video; this.mutedWhenAttached = video.muted; }
   recoverMediaError() { this.recovered = true; }
   destroy() { this.destroyed = true; }
 }
 
-test('prefers native HLS when the video element supports it', () => {
-  const video = new FakeVideo(true);
-  const states = [];
-  const player = createPlayerController({ getVideo: () => video, getHls: () => FakeHls, onState: (state) => states.push(state) });
-  assert.equal(player.loadLive('test'), 'native');
-  assert.match(video.src, /\/live\/test\.m3u8$/);
-  video.emit('loadedmetadata');
-  assert.equal(states.at(-1), 'ready');
+function notAllowed(message = 'blocked') {
+  return Object.assign(new Error(message), { name: 'NotAllowedError' });
+}
+
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function createHarness({
+  nativeHls = false,
+  storageValues = {},
+  fetchResult = { ok: true, body: { cancel: () => Promise.resolve() } },
+  AudioContext = FakeAudioContext,
+  href = 'http://localhost/watch',
+  navigator = {},
+} = {}) {
+  const video = new FakeVideo({ nativeHls });
+  const container = new FakeContainer(video);
+  const document = new FakeDocument();
+  const storage = new FakeStorage(storageValues);
+  const snapshots = [];
+  const debugNotifications = [];
+  const timer = { callback: null, cleared: false };
+  const videoChanges = [];
+  const controller = createPlayerController({
+    video,
+    container,
+    getHls: () => FakeHls,
+    storage,
+    environment: {
+      AudioContext,
+      document,
+      navigator,
+      location: { href },
+      fetch: async () => {
+        if (fetchResult instanceof Error) throw fetchResult;
+        return fetchResult;
+      },
+      now: () => 1_700_000_000_000,
+      setInterval: (callback) => { timer.callback = callback; return 1; },
+      clearInterval: () => { timer.cleared = true; timer.callback = null; },
+    },
+    onSnapshot: (snapshot) => snapshots.push(snapshot),
+    onDebug: (notification) => debugNotifications.push(notification),
+    onVideoChange: (next) => videoChanges.push(next),
+  });
+  return {
+    video, container, document, storage, snapshots, debugNotifications, timer, videoChanges, controller,
+    get snapshot() { return snapshots.at(-1); },
+  };
+}
+
+test('exports exactly the eight supported playback rates', () => {
+  assert.deepEqual(PLAYER_RATES, [0.25, 0.5, 0.75, 1, 2, 4, 8, 16]);
 });
 
-test('uses hls.js, recovers one media error, and reports fatal network errors', () => {
+test('player markup removes native controls and exposes custom accessible controls and Debug', async () => {
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /<video[^>]*\scontrols(?:\s|=|>)/i);
+  assert.match(html, /id="player-timeline"/);
+  assert.match(html, /aria-label="播放速度"/);
+  assert.match(html, /aria-controls="player-debug-panel"/);
+  assert.match(html, /id="player-debug-panel"/);
+});
+
+test('live HLS is muted before attachment and autoplay state follows the play promise', async () => {
   FakeHls.instances = [];
-  const video = new FakeVideo(false);
-  const states = [];
-  const player = createPlayerController({ getVideo: () => video, getHls: () => FakeHls, onState: (state) => states.push(state) });
-  assert.equal(player.loadLive('test'), 'hls');
+  const harness = createHarness();
+  const { controller, video } = harness;
+  assert.equal(await controller.loadLive('panda'), 'hls');
+  const hls = FakeHls.instances[0];
+  assert.equal(hls.mutedWhenAttached, true);
+  assert.equal(hls.config.maxLiveSyncPlaybackRate, 1.25);
+  assert.equal(video.playCalls, 0);
+
+  hls.emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  assert.equal(video.playCalls, 1);
+  assert.equal(harness.snapshot.autoplayState, 'playing-muted');
+  assert.equal(harness.snapshot.playerState, 'playing');
+  assert.equal(harness.snapshot.following, true);
+  assert.equal(FakeAudioContext.instances.length, 0);
+  await controller.destroy();
+});
+
+test('NotAllowedError blocks muted autoplay once without a retry loop', async () => {
+  FakeHls.instances = [];
+  const harness = createHarness();
+  harness.video.playResults.push(notAllowed());
+  await harness.controller.loadLive('panda');
+  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  assert.equal(harness.snapshot.autoplayState, 'blocked');
+  assert.equal(harness.snapshot.playerState, 'ready');
+  assert.equal(harness.video.playCalls, 1);
+  assert.match(harness.snapshot.message, /阻擋自動播放/);
+  await harness.controller.destroy();
+});
+
+test('record timecode waits for metadata, clamps to duration, and never autoplays', async () => {
+  const harness = createHarness();
+  assert.equal(await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' }, { timecode: '999.9' }), 'native');
+  harness.video.duration = 120;
+  harness.video.emit('loadedmetadata');
+  assert.equal(harness.video.currentTime, 120);
+  assert.equal(harness.video.playCalls, 0);
+  assert.equal(harness.snapshot.playerState, 'ready');
+  assert.equal(harness.snapshot.paused, true);
+  assert.equal(harness.snapshot.autoplayState, 'idle');
+  await harness.controller.destroy();
+});
+
+test('invalid timecodes are ignored and recorded in Debug', async () => {
+  const harness = createHarness();
+  await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' }, { timecode: '-2' });
+  harness.video.duration = 120;
+  harness.video.emit('loadedmetadata');
+  assert.equal(harness.video.currentTime, 0);
+  assert.equal(harness.controller.getDebugEntries({ text: 'TIMECODE_INVALID' }).length, 1);
+  await harness.controller.destroy();
+});
+
+test('AudioContext is lazy, unmute requires running state, and 200% gain is clamped when boost closes', async () => {
+  FakeAudioContext.instances = [];
+  FakeAudioContext.failResume = false;
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
+  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  assert.equal(FakeAudioContext.instances.length, 0);
+
+  assert.equal(harness.controller.setBoost(true), true);
+  await harness.controller.setVolume(180);
+  const context = FakeAudioContext.instances[0];
+  assert.equal(context.state, 'running');
+  assert.equal(context.gains[0].gain.value, 1.8);
+  assert.equal(harness.snapshot.muted, false);
+  assert.equal(harness.storage.getItem('oktw.player.volumePercent'), '180');
+
+  harness.controller.setBoost(false);
+  assert.equal(harness.snapshot.volumePercent, 100);
+  assert.equal(context.gains[0].gain.value, 1);
+  assert.equal(harness.storage.getItem('oktw.player.volumePercent'), '100');
+  await harness.controller.destroy();
+});
+
+test('failed AudioContext resume keeps UI and element muted', async () => {
+  FakeAudioContext.instances = [];
+  FakeAudioContext.failResume = true;
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
+  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  await harness.controller.setMuted(false);
+  assert.equal(harness.video.muted, true);
+  assert.equal(harness.snapshot.muted, true);
+  assert.match(harness.snapshot.message, /再次點擊/);
+  FakeAudioContext.failResume = false;
+  await harness.controller.destroy();
+});
+
+test('zero volume mutes and unmute restores the most recent audible volume', async () => {
+  FakeAudioContext.failResume = false;
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
+  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  await harness.controller.setVolume(65);
+  await harness.controller.setVolume(0);
+  assert.equal(harness.snapshot.muted, true);
+  assert.equal(harness.snapshot.muteReason, 'volume-zero');
+  await harness.controller.setMuted(false);
+  assert.equal(harness.snapshot.volumePercent, 65);
+  assert.equal(harness.snapshot.muted, false);
+  assert.equal(harness.storage.getItem('oktw.player.volumePercent'), '65');
+  assert.equal(harness.storage.getItem('muted'), null);
+  await harness.controller.destroy();
+});
+
+test('unsupported playback rate restores the previous selected and effective rate', async () => {
+  const harness = createHarness();
+  await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
+  assert.equal(harness.controller.setPlaybackRate(4), true);
+  harness.video.rejectedRates.add(16);
+  assert.equal(harness.controller.setPlaybackRate(16), false);
+  assert.equal(harness.snapshot.selectedRate, 4);
+  assert.equal(harness.snapshot.effectiveRate, 4);
+  assert.match(harness.snapshot.message, /不支援 16x/);
+  await harness.controller.destroy();
+});
+
+test('HLS media errors recover once and fatal network errors report offline', async () => {
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
   const hls = FakeHls.instances[0];
   hls.emit(FakeHls.Events.ERROR, { fatal: true, type: FakeHls.ErrorTypes.MEDIA_ERROR });
   assert.equal(hls.recovered, true);
   hls.emit(FakeHls.Events.ERROR, { fatal: true, type: FakeHls.ErrorTypes.NETWORK_ERROR });
-  assert.equal(states.at(-1), 'offline');
+  assert.equal(harness.snapshot.playerState, 'offline');
   assert.equal(hls.destroyed, true);
+  await harness.controller.destroy();
 });
 
-test('loads recordings natively and cleans up resources', () => {
-  const video = new FakeVideo(false);
-  const player = createPlayerController({ getVideo: () => video, getHls: () => FakeHls });
-  player.loadRecord({ filename: 'cute_panda-1700000000.flv' });
-  assert.match(video.src, /\/record\/cute_panda-1700000000\.flv$/);
-  player.cleanup();
-  assert.equal(video.src, '');
+test('native HLS establishes target latency, catches up, stops, and enters DVR on an old seek', async () => {
+  const harness = createHarness({ nativeHls: true });
+  harness.video.buffered = new FakeTimeRanges([[0, 10]]);
+  harness.video.seekable = new FakeTimeRanges([[0, 10]]);
+  harness.video.currentTime = 5;
+  await harness.controller.loadLive('panda');
+  harness.video.emit('loadedmetadata');
+  await flush();
+  for (let index = 0; index < 5; index += 1) harness.timer.callback();
+  assert.equal(harness.snapshot.targetLatency, 5);
+
+  harness.video.currentTime = 3;
+  harness.timer.callback();
+  assert.equal(harness.video.playbackRate, 1.25);
+  assert.equal(harness.snapshot.catchUpActive, true);
+
+  harness.video.currentTime = 5;
+  harness.timer.callback();
+  assert.equal(harness.video.playbackRate, 1);
+  assert.equal(harness.snapshot.catchUpActive, false);
+
+  harness.controller.seek(2);
+  assert.equal(harness.snapshot.following, false);
+  assert.equal(harness.snapshot.catchUpReason, 'dvr-seek');
+  assert.equal(harness.controller.goLive(), true);
+  assert.equal(harness.video.currentTime, 9.75);
+  assert.equal(harness.snapshot.following, true);
+  await harness.controller.destroy();
+});
+
+test('HLS catch-up configuration pauses for non-1x selection and resumes at 1x', async () => {
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
+  const hls = FakeHls.instances[0];
+  hls.emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  assert.equal(hls.config.maxLiveSyncPlaybackRate, 1.25);
+  harness.controller.setPlaybackRate(2);
+  assert.equal(hls.config.maxLiveSyncPlaybackRate, 1);
+  harness.controller.setPlaybackRate(1);
+  assert.equal(hls.config.maxLiveSyncPlaybackRate, 1.25);
+  harness.controller.setAutoCatchUp(false);
+  assert.equal(hls.config.maxLiveSyncPlaybackRate, 1);
+  await harness.controller.destroy();
+});
+
+test('cross-origin unsafe source disables boost and replaces an already Web-Audio-routed video', async () => {
+  FakeAudioContext.failResume = false;
+  FakeHls.instances = [];
+  const harness = createHarness({ fetchResult: new TypeError('CORS blocked') });
+  await harness.controller.loadLive('panda');
+  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  await harness.controller.setMuted(false);
+  const original = harness.video;
+  await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
+  assert.equal(harness.videoChanges.length, 1);
+  assert.notEqual(harness.container.video, original);
+  assert.equal(harness.snapshot.boostAvailable, false);
+  assert.match(harness.snapshot.boostUnavailableReason, /CORS/);
+  await harness.controller.destroy();
+});
+
+test('same-source retry preserves the current mute choice while a new live source remutes', async () => {
+  FakeAudioContext.failResume = false;
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('one');
+  FakeHls.instances.at(-1).emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  await harness.controller.setMuted(false);
+  assert.equal(harness.snapshot.muted, false);
+  await harness.controller.retry();
+  assert.equal(harness.snapshot.muted, false);
+  await harness.controller.loadLive('two');
+  assert.equal(harness.snapshot.muted, true);
+  assert.equal(harness.snapshot.muteReason, 'new-live');
+  await harness.controller.destroy();
+});
+
+test('foreground resume falls back to one muted play attempt', async () => {
+  FakeHls.instances = [];
+  const harness = createHarness({ AudioContext: undefined });
+  await harness.controller.loadLive('panda');
+  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  await harness.controller.setMuted(false);
+  harness.video.paused = true;
+  harness.video.emit('pause');
+  harness.document.visibilityState = 'hidden';
+  harness.document.emit('visibilitychange');
+  harness.video.playResults.push(notAllowed(), true);
+  harness.document.visibilityState = 'visible';
+  harness.document.emit('visibilitychange');
+  await flush();
+  assert.equal(harness.snapshot.muted, true);
+  assert.equal(harness.snapshot.muteReason, 'foreground-fallback');
+  assert.match(harness.snapshot.message, /已靜音以繼續播放/);
+  await harness.controller.destroy();
+});
+
+test('record sharing adds an integer timecode and clipboard fallback reports success', async () => {
+  let copied = '';
+  const harness = createHarness({
+    href: 'http://localhost/record/panda.mp4?t=5&theme=dark',
+    navigator: { clipboard: { writeText: async (value) => { copied = value; } } },
+  });
+  await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
+  harness.video.currentTime = 12.9;
+  const result = await harness.controller.share({ includeTime: true });
+  assert.equal(result.method, 'clipboard');
+  assert.equal(new URL(copied).searchParams.get('t'), '12');
+  assert.equal(new URL(copied).searchParams.get('theme'), 'dark');
+  assert.equal(harness.snapshot.shareStatus, '分享網址已複製');
+  await harness.controller.destroy();
+});
+
+test('Debug uses a 500-entry ring, filters entries, safely exports cycles, and clears', async () => {
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
+  const cyclic = {};
+  cyclic.self = cyclic;
+  FakeHls.instances[0].emit(FakeHls.Events.LEVEL_LOADED, cyclic);
+  for (let index = 0; index < 520; index += 1) harness.video.emit('timeupdate');
+  const entries = harness.controller.getDebugEntries();
+  assert.equal(entries.length, 500);
+  assert.ok(entries[0].sequence > 1);
+  assert.ok(harness.controller.getDebugEntries({ source: 'media', text: 'timeupdate' }).length > 0);
+  assert.doesNotThrow(() => JSON.parse(harness.controller.exportDebug()));
+  harness.controller.clearDebug();
+  assert.equal(harness.controller.getDebugEntries().length, 0);
+  assert.equal(harness.snapshot.debugCount, 0);
+  await harness.controller.destroy();
+});
+
+test('cleanup keeps AudioContext reusable while destroy closes it and removes timers', async () => {
+  FakeAudioContext.instances = [];
+  FakeAudioContext.failResume = false;
+  FakeHls.instances = [];
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
+  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  await harness.controller.setMuted(false);
+  const context = FakeAudioContext.instances[0];
+  harness.controller.cleanup();
+  assert.equal(context.state, 'running');
+  assert.equal(harness.snapshot.playerState, 'idle');
+  assert.equal(harness.timer.callback, null);
+  await harness.controller.destroy();
+  assert.equal(context.state, 'closed');
 });

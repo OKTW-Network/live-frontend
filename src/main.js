@@ -1,5 +1,5 @@
 import { ChatClient } from './chat.js';
-import { createPlayerController } from './player.js';
+import { createPlayerController, PLAYER_RATES } from './player.js';
 import {
   PAGE_SIZE,
   RECORD_LIST_URL,
@@ -87,8 +87,52 @@ function registerApp(Alpine) {
     routeRun: 0,
     player: null,
     activeMediaKey: '',
-    playerState: 'idle',
-    mediaStarted: false,
+    playerSnapshot: {
+      mode: null,
+      playerState: 'idle',
+      autoplayState: 'idle',
+      paused: true,
+      playing: false,
+      hasPlayed: false,
+      currentTime: 0,
+      duration: null,
+      timelineStart: 0,
+      timelineEnd: 0,
+      canSeek: false,
+      buffered: [],
+      seekable: [],
+      muted: false,
+      muteReason: 'none',
+      volumePercent: 100,
+      boostEnabled: false,
+      boostAvailable: false,
+      boostUnavailableReason: '',
+      selectedRate: 1,
+      effectiveRate: 1,
+      autoCatchUp: true,
+      following: false,
+      catchUpActive: false,
+      latency: null,
+      targetLatency: null,
+      forwardBuffer: 0,
+      audioContextState: 'not-created',
+      pip: false,
+      fullscreen: false,
+      message: '',
+      shareStatus: '',
+      lastError: null,
+      debugCount: 0,
+      capabilities: { boost: false, pictureInPicture: false, fullscreen: false, share: false },
+    },
+    playerRates: PLAYER_RATES,
+    shareOpen: false,
+    shareIncludeTime: true,
+    debugOpen: false,
+    debugEntries: [],
+    debugCount: 0,
+    debugFilters: { source: '', level: '', text: '' },
+    debugAutoScroll: true,
+    debugCopyStatus: '',
     posterExt: 'jxl',
     posterFailed: false,
     chatClient: null,
@@ -108,11 +152,16 @@ function registerApp(Alpine) {
 
     async init() {
       this.player = createPlayerController({
-        getVideo: () => this.$refs.video,
+        video: this.$refs.video,
+        container: this.$refs.playerContainer,
         getHls: () => window.Hls,
-        onState: (state) => {
-          this.playerState = state;
-          if (state === 'playing') this.mediaStarted = true;
+        storage: localStorage,
+        onSnapshot: (snapshot) => {
+          this.playerSnapshot = snapshot;
+        },
+        onDebug: ({ count }) => {
+          this.debugCount = count;
+          if (this.debugOpen) this.refreshDebug();
         },
       });
 
@@ -410,17 +459,15 @@ function registerApp(Alpine) {
       if (this.activeMediaKey === key) return;
       this.deactivateMedia();
       this.activeMediaKey = key;
-      this.playerState = 'loading';
-      this.mediaStarted = false;
       await Alpine.nextTick();
       if (routeRun !== this.routeRun || this.activeMediaKey !== key) return;
       this.connectChat(chatChannel);
-      if (kind === 'live') this.player.loadLive(source);
-      else this.player.loadRecord(this.currentRecord);
+      if (kind === 'live') await this.player.loadLive(source);
+      else await this.player.loadRecord(this.currentRecord, { timecode: new URLSearchParams(location.search).get('t') });
     },
 
     deactivateMedia() {
-      if (this.activeMediaKey || this.playerState !== 'idle') this.player?.cleanup();
+      if (this.activeMediaKey || this.playerSnapshot.playerState !== 'idle') this.player?.cleanup();
       Alpine.raw(this.chatClient)?.disconnect();
       this.activeMediaKey = '';
       this.chatClient = null;
@@ -428,8 +475,9 @@ function registerApp(Alpine) {
       this.chatMessages = [];
       this.chatViewerCount = 0;
       this.chatDraft = '';
-      this.playerState = 'idle';
-      this.mediaStarted = false;
+      this.shareOpen = false;
+      this.debugOpen = false;
+      this.debugEntries = [];
     },
 
     connectChat(channel) {
@@ -458,14 +506,147 @@ function registerApp(Alpine) {
       if (Alpine.raw(this.chatClient)?.sendMessage(this.chatDraft)) this.chatDraft = '';
     },
 
-    retryPlayer() {
-      if (this.currentRecord && this.activeMediaKey === `record:${this.currentRecord.filename}`) this.player.loadRecord(this.currentRecord);
-      else if (this.currentStreamer && this.activeMediaKey === `live:${this.currentStreamer.name}`) this.player.loadLive(this.currentStreamer.name);
+    async retryPlayer() {
+      await this.player?.retry();
+    },
+
+    togglePlayback() {
+      if (this.playerSnapshot.paused) this.player?.play();
+      else this.player?.pause();
+    },
+
+    toggleMute() {
+      this.player?.setMuted(!this.playerSnapshot.muted);
+    },
+
+    changePlayerVolume(event) {
+      this.player?.setVolume(Number(event.target.value));
+    },
+
+    changePlayerBoost(event) {
+      this.player?.setBoost(event.target.checked);
+    },
+
+    changePlayerRate(event) {
+      this.player?.setPlaybackRate(Number(event.target.value));
+    },
+
+    changeAutoCatchUp(event) {
+      this.player?.setAutoCatchUp(event.target.checked);
+    },
+
+    seekPlayer(event) {
+      this.player?.seek(Number(event.target.value));
+    },
+
+    toggleShare() {
+      this.shareOpen = !this.shareOpen;
+      if (this.shareOpen) this.shareIncludeTime = true;
+    },
+
+    async submitShare() {
+      await this.player?.share({ includeTime: this.view === 'record' && this.shareIncludeTime });
+    },
+
+    toggleDebug() {
+      this.debugOpen = !this.debugOpen;
+      if (this.debugOpen) this.refreshDebug();
+    },
+
+    refreshDebug() {
+      const player = Alpine.raw(this.player);
+      if (!player) return;
+      this.debugEntries = player.getDebugEntries(this.debugFilters);
+      if (this.debugAutoScroll) {
+        Alpine.nextTick(() => this.$refs.debugLog?.scrollTo({ top: this.$refs.debugLog.scrollHeight }));
+      }
+    },
+
+    clearPlayerDebug() {
+      Alpine.raw(this.player)?.clearDebug();
+      this.refreshDebug();
+    },
+
+    async copyPlayerDebug() {
+      const json = Alpine.raw(this.player)?.exportDebug();
+      if (!json || !navigator.clipboard?.writeText) {
+        this.debugCopyStatus = '瀏覽器不支援複製 Debug JSON。';
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(json);
+        this.debugCopyStatus = 'Debug JSON 已複製。';
+      } catch {
+        this.debugCopyStatus = '複製失敗，請稍後再試。';
+      }
+    },
+
+    handlePlayerShortcut(event) {
+      if (!this.activeMediaKey || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target?.closest?.('input, select, textarea, button, [contenteditable="true"]')) return;
+      const key = event.key.toLocaleLowerCase();
+      if (event.repeat && [' ', 'k', 'm', 'f'].includes(key)) return;
+      if (key === ' ' || key === 'k') {
+        event.preventDefault();
+        this.togglePlayback();
+      } else if (key === 'm') {
+        event.preventDefault();
+        this.toggleMute();
+      } else if (key === 'f') {
+        event.preventDefault();
+        this.player?.toggleFullscreen();
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        this.player?.seek(this.playerSnapshot.currentTime - 5);
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        this.player?.seek(this.playerSnapshot.currentTime + 5);
+      }
+    },
+
+    formatPlayerTime(value) {
+      const seconds = Number(value);
+      if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
+      const whole = Math.floor(seconds);
+      const hours = Math.floor(whole / 3600);
+      const minutes = Math.floor((whole % 3600) / 60);
+      const remainder = whole % 60;
+      return hours
+        ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+        : `${minutes}:${String(remainder).padStart(2, '0')}`;
+    },
+
+    playerTimeLabel() {
+      if (this.playerSnapshot.mode === 'live') {
+        if (this.playerSnapshot.following && this.playerSnapshot.latency !== null) {
+          return `LIVE · 延遲 ${this.playerSnapshot.latency.toFixed(1)} 秒`;
+        }
+        return `DVR · ${this.formatPlayerTime(this.playerSnapshot.currentTime)}`;
+      }
+      return `${this.formatPlayerTime(this.playerSnapshot.currentTime)} / ${this.formatPlayerTime(this.playerSnapshot.duration)}`;
+    },
+
+    formatDebugPayload(entry) {
+      try { return JSON.stringify(entry.payload); } catch { return '[Unserializable]'; }
+    },
+
+    formatPlayerRanges(ranges) {
+      if (!ranges?.length) return '—';
+      return ranges.map(({ start, end }) => `${start.toFixed(2)}–${end.toFixed(2)}`).join(', ');
+    },
+
+    formatPlayerValue(value) {
+      if (value === null || value === undefined || value === '') return '—';
+      if (typeof value === 'object') {
+        try { return JSON.stringify(value); } catch { return '[Unserializable]'; }
+      }
+      return String(value);
     },
 
     destroy() {
       this.stopProbes();
       this.deactivateMedia();
+      this.player?.destroy();
       document.removeEventListener('click', this.navigationHandler);
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       window.removeEventListener('popstate', this.popstateHandler);
@@ -488,13 +669,7 @@ function registerApp(Alpine) {
     },
 
     playerMessage() {
-      return {
-        loading: '正在連線影音來源…',
-        ready: '已就緒，按下播放即可開始。',
-        offline: '目前沒有直播，或串流無法取得。',
-        unsupported: '這個瀏覽器不支援 HLS 播放。',
-        error: this.currentRecord ? '瀏覽器無法播放這份直播紀錄。' : '影音播放發生錯誤。',
-      }[this.playerState] || '';
+      return this.playerSnapshot.message || '';
     },
 
     chatStateLabel() {
