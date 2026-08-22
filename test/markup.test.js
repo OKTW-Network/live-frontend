@@ -6,8 +6,8 @@ test('header statistics are the only primary navigation', async () => {
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   const header = html.slice(html.indexOf('<header'), html.indexOf('</header>') + '</header>'.length);
 
-  assert.match(header, />ON LIVE<\/span>/);
-  assert.doesNotMatch(header, />OKTW LIVE<\/span>/);
+  assert.match(header, />LIVE<\/span>/);
+  assert.doesNotMatch(header, />(?:OKTW|ON) LIVE<\/span>/);
   assert.match(header, /<nav aria-label="主要導覽與平台統計"/);
   assert.match(header, /<a href="\/#live-now"[^>]*>.*直播中.*liveStreamers\.length.*<\/a>/s);
   assert.match(header, /<a href="\/#creators"[^>]*>.*主播.*streamers\.length.*<\/a>/s);
