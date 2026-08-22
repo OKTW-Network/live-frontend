@@ -243,7 +243,7 @@ test('player markup keeps core controls visible and moves secondary actions into
   const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /<video[^>]*\scontrols(?:\s|=|>)/i);
   assert.match(html, /id="player-timeline"/);
-  assert.match(html, /x-ref="playerContainer"[^>]*class="player-stage"/);
+  assert.match(html, /x-ref="playerContainer"[^>]*class="[^"]*\bplayer-stage\b[^"]*"/);
   assert.match(html, /id="player-settings-panel"[^>]*role="dialog"/);
   assert.match(html, /aria-controls="player-settings-panel"/);
   assert.match(html, /aria-controls="player-debug-panel"/);
@@ -267,7 +267,10 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.match(settingsMarkup, /togglePictureInPicture/);
   assert.match(settingsMarkup, /toggleDebug/);
   assert.match(settingsMarkup, /x-transition:enter/);
+  assert.match(settingsMarkup, /class="player-settings-panel w-full border-t/);
+  assert.match(settingsMarkup, /class="player-settings-grid/);
   assert.doesNotMatch(settingsMarkup, /\babsolute\b|\bbottom-16\b|\bfixed\b/);
+  assert.doesNotMatch(settingsMarkup, /\bml-auto\b|\bw-80\b|\brounded-xl\b|\bshadow-2xl\b/);
 
   const controlsMarkup = html.slice(controlsStart, settingsStart);
   assert.doesNotMatch(controlsMarkup, /aria-label="播放速度"|自動追趕|追上直播|togglePictureInPicture|toggleDebug|toggleShare/);
@@ -277,6 +280,8 @@ test('player markup keeps core controls visible and moves secondary actions into
   assert.match(titleMarkup, /包含目前時間/);
   assert.match(titleMarkup, /data-heroicon="share"/);
   assert.match(css, /\.player-stage:fullscreen/);
+  assert.match(css, /\.player-stage:fullscreen \.player-settings-panel\s*{[^}]*width:\s*100%/s);
+  assert.match(css, /\.player-settings-grid\s*{[^}]*grid-template-columns:/s);
   assert.doesNotMatch(css, /\.player-settings-panel\s*{[^}]*position:\s*fixed/s);
 });
 

@@ -82,6 +82,10 @@ a, button, input, select { outline-offset: 4px; }
 
 .chat-scroll { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
 
+.player-stage {
+  isolation: isolate;
+}
+
 .player-stage:fullscreen {
   display: flex;
   flex-direction: column;
@@ -102,10 +106,10 @@ a, button, input, select { outline-offset: 4px; }
 .player-stage:fullscreen .player-shell video { height: 100%; }
 
 .player-stage:fullscreen .player-settings-panel {
-  width: min(20rem, calc(100% - 1.5rem));
-  max-height: min(55vh, 30rem);
+  width: 100%;
+  max-height: min(45vh, 30rem);
   flex: 0 0 auto;
-  margin: .5rem .75rem .75rem auto;
+  margin: 0;
 }
 
 .player-controls {
@@ -212,9 +216,23 @@ a, button, input, select { outline-offset: 4px; }
 .player-settings-panel {
   max-height: min(70vh, 30rem);
   overflow-y: auto;
-  transform-origin: top right;
+  transform-origin: top center;
   scrollbar-color: rgb(255 255 255 / .35) transparent;
   scrollbar-width: thin;
+}
+
+.player-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / .1);
+  border-radius: .65rem;
+  background: rgb(255 255 255 / .1);
+}
+
+@media (min-width: 640px) {
+  .player-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .player-setting-row,
@@ -225,6 +243,8 @@ a, button, input, select { outline-offset: 4px; }
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  padding: .35rem .75rem;
+  background: #111113;
   color: #fff;
   text-align: left;
 }
@@ -242,8 +262,6 @@ a, button, input, select { outline-offset: 4px; }
 
 .player-setting-action {
   justify-content: flex-start;
-  border-radius: .45rem;
-  padding: 0 .35rem;
   font-size: .75rem;
   font-weight: 900;
 }
