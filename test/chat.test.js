@@ -2,25 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChatClient, MAX_MESSAGES, chatServerUrl } from '../src/chat.js';
 
-class FakeSocket {
+class FakeSocket extends EventTarget {
   static instances = [];
 
   constructor(url) {
+    super();
     this.url = url;
     this.readyState = 0;
-    this.listeners = new Map();
     this.sent = [];
     FakeSocket.instances.push(this);
   }
 
-  addEventListener(type, handler) {
-    const handlers = this.listeners.get(type) || [];
-    handlers.push(handler);
-    this.listeners.set(type, handlers);
-  }
-
   emit(type, payload = {}) {
-    for (const handler of this.listeners.get(type) || []) handler(payload);
+    this.dispatchEvent(Object.assign(new Event(type), payload));
   }
 
   open() {

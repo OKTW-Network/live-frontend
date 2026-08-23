@@ -145,55 +145,6 @@ export function serializeRecordQuery(filters = {}) {
   return params.size ? `?${params.toString()}` : '';
 }
 
-export function parseChannelRecordQuery(value = '') {
-  const { query, from, to, sort } = parseRecordQuery(value);
-  return { query, from, to, sort };
-}
-
-export function serializeChannelRecordQuery(filters = {}) {
-  const normalized = parseChannelRecordQuery(new URLSearchParams([
-    ['q', filters.query || ''],
-    ['from', filters.from || ''],
-    ['to', filters.to || ''],
-    ['sort', filters.sort || ''],
-  ]));
-  const params = new URLSearchParams();
-  if (normalized.query) params.set('q', normalized.query);
-  if (normalized.from) params.set('from', normalized.from);
-  if (normalized.to) params.set('to', normalized.to);
-  if (normalized.sort === 'oldest') params.set('sort', 'oldest');
-  return params.size ? `?${params.toString()}` : '';
-}
-
-export function createRecordViewSnapshot({ filters = {}, visibleCount = PAGE_SIZE, scrollY = 0 } = {}) {
-  return {
-    filters: parseRecordQuery(serializeRecordQuery(filters)),
-    visibleCount: Math.max(PAGE_SIZE, Math.floor(Number(visibleCount) || PAGE_SIZE)),
-    scrollY: Math.max(0, Number(scrollY) || 0),
-  };
-}
-
-export function recordViewSnapshotMatches(snapshot, filters) {
-  if (!snapshot || typeof snapshot !== 'object') return false;
-  return serializeRecordQuery(snapshot.filters) === serializeRecordQuery(filters);
-}
-
-export function createChannelViewSnapshot({
-  streamer = '', filters = {}, visibleCount = PAGE_SIZE, scrollY = 0,
-} = {}) {
-  return {
-    streamer,
-    filters: parseChannelRecordQuery(serializeChannelRecordQuery(filters)),
-    visibleCount: Math.max(PAGE_SIZE, Math.floor(Number(visibleCount) || PAGE_SIZE)),
-    scrollY: Math.max(0, Number(scrollY) || 0),
-  };
-}
-
-export function channelViewSnapshotMatches(snapshot, streamer, filters) {
-  if (!snapshot || typeof snapshot !== 'object' || snapshot.streamer !== streamer) return false;
-  return serializeChannelRecordQuery(snapshot.filters) === serializeChannelRecordQuery(filters);
-}
-
 const fullDateFormatter = new Intl.DateTimeFormat('zh-TW-u-ca-gregory', {
   timeZone: 'Asia/Taipei',
   year: 'numeric',

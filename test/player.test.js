@@ -1,20 +1,10 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPlayerController } from '../src/player/controller.js';
-import { migratePlayerStorage } from '../src/player/shared.js';
 
-class FakeEventTarget {
-  constructor() { this.listeners = new Map(); }
-  addEventListener(type, handler) {
-    const handlers = this.listeners.get(type) || [];
-    handlers.push(handler);
-    this.listeners.set(type, handlers);
-  }
-  removeEventListener(type, handler) {
-    this.listeners.set(type, (this.listeners.get(type) || []).filter((candidate) => candidate !== handler));
-  }
+class FakeEventTarget extends EventTarget {
   emit(type, detail = {}) {
-    for (const handler of [...(this.listeners.get(type) || [])]) handler({ type, target: this, ...detail });
+    this.dispatchEvent(Object.assign(new Event(type), detail));
   }
 }
 
@@ -117,7 +107,6 @@ class FakeStorage {
   constructor(values = {}) { this.values = new Map(Object.entries(values)); }
   getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
   setItem(key, value) { this.values.set(key, String(value)); }
-  removeItem(key) { this.values.delete(key); }
 }
 
 class FakeAudioNode {
@@ -205,7 +194,6 @@ function createHarness({
   const storage = new FakeStorage(storageValues);
   const snapshots = [];
   const timer = { callback: null, cleared: false };
-  const videoChanges = [];
   const controller = createPlayerController({
     video,
     container,
@@ -220,21 +208,24 @@ function createHarness({
         if (fetchResult instanceof Error) throw fetchResult;
         return fetchResult;
       },
-      now: () => 1_700_000_000_000,
       setInterval: (callback) => { timer.callback = callback; return 1; },
       clearInterval: () => { timer.cleared = true; timer.callback = null; },
     },
     onSnapshot: (snapshot) => snapshots.push(snapshot),
-    onVideoChange: (next) => videoChanges.push(next),
   });
   return {
-    video, container, document, storage, snapshots, timer, videoChanges, controller,
+    video, container, document, storage, snapshots, timer, controller,
     get snapshot() { return snapshots.at(-1); },
   };
 }
 
-test('live HLS is muted before attachment and autoplay state follows the play promise', async () => {
+beforeEach(() => {
+  FakeAudioContext.instances = [];
+  FakeAudioContext.failResume = false;
   FakeHls.instances = [];
+});
+
+test('live HLS is muted before attachment and autoplay state follows the play promise', async () => {
   const harness = createHarness();
   const { controller, video } = harness;
   assert.equal(await controller.loadLive('panda'), 'hls');
@@ -254,7 +245,6 @@ test('live HLS is muted before attachment and autoplay state follows the play pr
 });
 
 test('NotAllowedError blocks muted autoplay once without a retry loop', async () => {
-  FakeHls.instances = [];
   const harness = createHarness();
   harness.video.playResults.push(notAllowed());
   await harness.controller.loadLive('panda');
@@ -306,9 +296,6 @@ test('seeks clamp records and live DVR to playable boundaries', async () => {
 });
 
 test('volume zero mutes, unmute restores audible volume, and boost clamps above 100%', async () => {
-  FakeAudioContext.instances = [];
-  FakeAudioContext.failResume = false;
-  FakeHls.instances = [];
   const harness = createHarness();
   await harness.controller.loadLive('panda');
   FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
@@ -332,19 +319,6 @@ test('volume zero mutes, unmute restores audible volume, and boost clamps above 
   await harness.controller.destroy();
 });
 
-test('legacy player preferences migrate once to ON LIVE keys', () => {
-  const storage = new FakeStorage({
-    'oktw.player.volumePercent': '145',
-    'onlive.player.selectedRate': '2',
-    'oktw.player.selectedRate': '4',
-  });
-  migratePlayerStorage(storage);
-  assert.equal(storage.getItem('onlive.player.volumePercent'), '145');
-  assert.equal(storage.getItem('onlive.player.selectedRate'), '2');
-  assert.equal(storage.getItem('oktw.player.volumePercent'), null);
-  assert.equal(storage.getItem('oktw.player.selectedRate'), null);
-});
-
 test('unsupported playback rate restores the previous selected and effective rate', async () => {
   const harness = createHarness();
   await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
@@ -358,7 +332,6 @@ test('unsupported playback rate restores the previous selected and effective rat
 });
 
 test('HLS media errors recover once and fatal network errors report offline', async () => {
-  FakeHls.instances = [];
   const harness = createHarness();
   await harness.controller.loadLive('panda');
   const hls = FakeHls.instances[0];
@@ -395,7 +368,6 @@ test('native catch-up establishes latency target, speeds up, and goLive restores
 });
 
 test('HLS catch-up rate pauses for non-1x selection and resumes at 1x', async () => {
-  FakeHls.instances = [];
   const harness = createHarness();
   await harness.controller.loadLive('panda');
   const hls = FakeHls.instances[0];
@@ -412,8 +384,6 @@ test('HLS catch-up rate pauses for non-1x selection and resumes at 1x', async ()
 });
 
 test('cross-origin unsafe source disables boost and replaces a Web-Audio-routed video', async () => {
-  FakeAudioContext.failResume = false;
-  FakeHls.instances = [];
   const harness = createHarness({ fetchResult: new TypeError('CORS blocked') });
   await harness.controller.loadLive('panda');
   FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
@@ -421,7 +391,6 @@ test('cross-origin unsafe source disables boost and replaces a Web-Audio-routed 
   await harness.controller.setMuted(false);
   const original = harness.video;
   await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
-  assert.equal(harness.videoChanges.length, 1);
   assert.notEqual(harness.container.video, original);
   assert.equal(harness.snapshot.boostAvailable, false);
   assert.match(harness.snapshot.boostUnavailableReason, /CORS/);
@@ -429,9 +398,6 @@ test('cross-origin unsafe source disables boost and replaces a Web-Audio-routed 
 });
 
 test('cleanup keeps AudioContext reusable while destroy closes it and removes timers', async () => {
-  FakeAudioContext.instances = [];
-  FakeAudioContext.failResume = false;
-  FakeHls.instances = [];
   const harness = createHarness();
   await harness.controller.loadLive('panda');
   FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);

@@ -13,6 +13,7 @@ const upstreamProxy = {
 export default defineConfig({
   plugins: [tailwindcss()],
   server: {
+    host: true,
     proxy: {
       '/__upstream': upstreamProxy,
     },

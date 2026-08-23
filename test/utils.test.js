@@ -5,11 +5,9 @@ import {
   filterRecords,
   isDateRangeInverted,
   normalizeRecords,
-  parseChannelRecordQuery,
   parseRoute,
   probeLive,
   serializeRecordQuery,
-  serializeChannelRecordQuery,
   parseRecordQuery,
 } from '../src/utils.js';
 
@@ -68,13 +66,6 @@ test('filters inclusive Asia/Taipei calendar days and serializes date ranges', (
   );
   assert.equal(isDateRangeInverted({ from: '2026-08-22', to: '2026-08-21' }), true);
   assert.deepEqual(filterRecords(records, { from: '2026-08-22', to: '2026-08-21' }), []);
-  assert.deepEqual(parseChannelRecordQuery('?q=start&from=2026-08-20&to=not-a-date&sort=oldest'), {
-    query: 'start', from: '2026-08-20', to: '', sort: 'oldest',
-  });
-  assert.equal(
-    serializeChannelRecordQuery({ query: 'start', from: '2026-08-20', to: '2026-08-21', sort: 'oldest' }),
-    '?q=start&from=2026-08-20&to=2026-08-21&sort=oldest',
-  );
   assert.equal(
     serializeRecordQuery({ streamer: 'panda', from: '2026-08-20', to: '2026-08-21' }),
     '?streamer=panda&from=2026-08-20&to=2026-08-21',
