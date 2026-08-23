@@ -78,6 +78,8 @@ export function registerApp(Alpine) {
     recordList: createListView({ includeStreamer: true }),
     channelList: createListView({ includeStreamer: false }),
     listObserver: null,
+    latestRecordsObserver: null,
+    latestRecordLimit: 8,
     playerShellObserver: null,
     playerShellHeight: 0,
     themePreference: storedThemePreference(),
@@ -208,6 +210,7 @@ export function registerApp(Alpine) {
 
       await this.loadRecords();
       await this.transitionToLocation(history.state, { initial: true });
+      this.setupLatestRecordsObserver();
       this.setupPlayerShellObserver();
       this.setupListObserver();
     },
@@ -257,6 +260,18 @@ export function registerApp(Alpine) {
       this.playerShellObserver.observe(shell);
       const initialHeight = shell.getBoundingClientRect().height;
       if (initialHeight > 0) this.playerShellHeight = Math.round(initialHeight * 100) / 100;
+    },
+
+    setupLatestRecordsObserver() {
+      const grid = this.$refs.latestRecordsGrid;
+      if (!grid || typeof ResizeObserver !== 'function') return;
+      const updateLimit = () => {
+        const tracks = getComputedStyle(grid).gridTemplateColumns;
+        if (tracks !== 'none') this.latestRecordLimit = Math.max(8, tracks.split(/\s+/).length * 2);
+      };
+      this.latestRecordsObserver = new ResizeObserver(updateLimit);
+      this.latestRecordsObserver.observe(grid);
+      updateLimit();
     },
 
     refreshListObserver() {
@@ -850,6 +865,8 @@ export function registerApp(Alpine) {
       this.deactivateMedia();
       this.listObserver?.disconnect();
       this.listObserver = null;
+      this.latestRecordsObserver?.disconnect();
+      this.latestRecordsObserver = null;
       this.playerShellObserver?.disconnect();
       this.playerShellObserver = null;
       this.playerShellHeight = 0;
@@ -906,7 +923,7 @@ export function registerApp(Alpine) {
     },
 
     get latestRecords() {
-      return this.records.slice(0, 8);
+      return this.records.slice(0, this.latestRecordLimit);
     },
 
     get liveProbePending() {

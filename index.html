@@ -29,8 +29,16 @@
     </div>
 
     <div x-data="liveApp" class="min-h-screen bg-[var(--page)] text-[var(--ink)]">
-      <header class="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--page)]/92 backdrop-blur-xl">
+      <header class="sticky top-0 z-50 bg-[var(--page)]/92 backdrop-blur-xl">
         <div class="flex h-16 w-full items-center gap-2 px-4 sm:gap-4 sm:px-6 lg:px-8">
+          <nav x-show="!loading && (view === 'channel' || view === 'record')" x-cloak class="shrink-0" aria-label="目前頁面導覽">
+            <a x-show="view === 'channel'" href="/" class="grid size-9 place-items-center rounded-full border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] transition hover:bg-[var(--soft)] hover:text-[var(--ink)]" aria-label="回到首頁" title="回到首頁">
+              <svg data-heroicon="arrow-left" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m10.5 19.5-7.5-7.5m0 0 7.5-7.5M3 12h18" /></svg>
+            </a>
+            <button x-show="view === 'record'" type="button" @click="backFromRecord" class="grid size-9 place-items-center rounded-full border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] transition hover:bg-[var(--soft)] hover:text-[var(--ink)]" aria-label="返回上一頁" title="返回">
+              <svg data-heroicon="arrow-left" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m10.5 19.5-7.5-7.5m0 0 7.5-7.5M3 12h18" /></svg>
+            </button>
+          </nav>
           <a href="/" class="flex shrink-0 items-center gap-2.5" aria-label="ON LIVE 首頁">
             <img src="/icon.svg" alt="" class="size-9 rounded-[10px]" />
             <span class="hidden text-sm font-black tracking-[-0.01em] sm:inline">ON LIVE</span>
@@ -46,7 +54,8 @@
               <svg data-heroicon="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" /></svg>
             </button>
           </div>
-          <nav aria-label="主要導覽與平台統計" class="grid shrink-0 grid-cols-3 divide-x divide-[var(--line)] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel)]">
+          <p x-show="chatAvailable" x-cloak class="flex shrink-0 items-center gap-2 text-xs font-bold text-[var(--muted)]" aria-live="polite"><span class="size-2 rounded-full" :class="chatState === 'open' ? 'bg-emerald-500' : 'bg-[var(--line-strong)]'"></span><span x-text="chatStateLabel()"></span></p>
+          <nav x-show="view !== 'channel' && view !== 'record'" x-cloak aria-label="主要導覽與平台統計" class="grid shrink-0 grid-cols-3 divide-x divide-[var(--line)] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel)]">
             <a href="/#live-now" class="header-stat-link flex min-w-11 flex-col items-center justify-center px-2 py-1.5 text-center transition hover:bg-[var(--soft)] focus-visible:bg-[var(--soft)] sm:min-w-14 sm:px-3"><span class="text-[9px] font-bold leading-none text-[var(--muted)]">直播中</span><span class="mt-1 text-sm font-black leading-none" x-text="liveStreamers.length"></span></a>
             <a href="/#creators" class="header-stat-link flex min-w-11 flex-col items-center justify-center px-2 py-1.5 text-center transition hover:bg-[var(--soft)] focus-visible:bg-[var(--soft)] sm:min-w-14 sm:px-3"><span class="text-[9px] font-bold leading-none text-[var(--muted)]">主播</span><span class="mt-1 text-sm font-black leading-none" x-text="streamers.length"></span></a>
             <a href="/records" class="header-stat-link flex min-w-11 flex-col items-center justify-center px-2 py-1.5 text-center transition hover:bg-[var(--soft)] focus-visible:bg-[var(--soft)] sm:min-w-14 sm:px-3"><span class="text-[9px] font-bold leading-none text-[var(--muted)]">紀錄</span><span class="mt-1 text-sm font-black leading-none" x-text="records.length"></span></a>
@@ -120,7 +129,7 @@
 
           <section class="w-full px-4 py-10 sm:px-6 lg:px-8">
             <div class="section-heading"><div><p class="eyebrow">LATEST REPLAYS</p><h2>最新直播紀錄</h2></div><a href="/records" class="text-sm font-bold hover:underline">查看全部 →</a></div>
-            <div class="media-grid grid gap-x-5 gap-y-8">
+            <div x-ref="latestRecordsGrid" class="media-grid grid gap-x-5 gap-y-8">
               <template x-for="record in latestRecords" :key="record.filename">
                 <a :href="recordPath(record.filename)" class="media-card group block min-w-0">
                   <div x-data="{ thumbExt: 'jxl', thumbFailed: false }" class="media-card-media relative aspect-video overflow-hidden bg-[var(--soft)]">
@@ -135,28 +144,7 @@
           </section>
         </div>
 
-        <section x-show="!loading && (view === 'channel' || view === 'record')" x-cloak class="w-full px-4 py-7 sm:px-6 sm:py-10 lg:px-8">
-          <div class="mb-6 flex items-center justify-between gap-4">
-            <a x-show="view === 'channel'" href="/" class="text-sm font-black text-[var(--muted)] hover:text-[var(--ink)]">← 回到首頁</a>
-            <button x-show="view === 'record'" type="button" @click="backFromRecord" class="text-sm font-black text-[var(--muted)] hover:text-[var(--ink)]">← 返回</button>
-            <p x-show="chatAvailable" class="ml-auto flex items-center gap-2 text-xs font-bold text-[var(--muted)]"><span class="size-2 rounded-full" :class="chatState === 'open' ? 'bg-emerald-500' : 'bg-[var(--line-strong)]'"></span><span x-text="chatStateLabel()"></span></p>
-          </div>
-
-          <div x-show="view === 'channel' && currentStreamer" class="mb-7 flex flex-col gap-5 border-b border-[var(--line)] pb-7 sm:flex-row sm:items-center sm:justify-between">
-              <div class="flex min-w-0 items-center gap-4">
-                <span class="relative grid size-16 shrink-0 place-items-center rounded-full bg-[var(--ink)] text-xl font-black text-[var(--page)] sm:size-20"><span x-text="streamerInitial(currentStreamer?.name)"></span><span x-show="liveStatuses[currentStreamer?.name] === 'online'" class="absolute bottom-0 right-0 size-4 rounded-full border-[3px] border-[var(--page)] bg-[var(--live)]"></span></span>
-                <div class="min-w-0"><p class="eyebrow">CHANNEL</p><h1 class="mt-1 break-all text-3xl font-black tracking-[-0.04em] sm:text-5xl" x-text="currentStreamer?.name || ''"></h1><p class="mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]"><span class="size-2 rounded-full" :class="statusDotClass(currentStreamer?.name)"></span><span x-text="statusLabel(currentStreamer?.name)"></span><span aria-hidden="true">·</span><span x-text="`${currentStreamer?.recordCount || 0} 份直播紀錄`"></span></p></div>
-              </div>
-              <a :href="allRecordsForCurrentStreamerUrl()" class="shrink-0 rounded-lg border border-[var(--line-strong)] px-4 py-2.5 text-center text-sm font-black hover:bg-[var(--soft)]">瀏覽全部紀錄</a>
-          </div>
-
-          <div x-show="view === 'channel' && currentStreamer && liveStatuses[currentStreamer.name] === 'checking'" class="channel-status-band mb-8 text-center" aria-live="polite">
-            <span class="mx-auto block size-8 animate-spin rounded-full border-4 border-[var(--line)] border-t-[var(--accent)]"></span><p class="mt-4 font-black">正在確認直播狀態…</p>
-          </div>
-          <div x-show="view === 'channel' && currentStreamer && liveStatuses[currentStreamer.name] === 'offline'" class="channel-status-band mb-8 text-center">
-            <p class="text-xl font-black">這個頻道目前離線</p><p class="mt-2 text-sm text-[var(--muted)]">下方仍可觀看過去的直播紀錄；直播狀態會每 60 秒更新。</p>
-          </div>
-
+        <section x-show="!loading && (view === 'channel' || view === 'record')" x-cloak class="w-full px-4 pb-7 sm:px-6 sm:pb-10 lg:px-8">
           <div x-show="view === 'record' || (view === 'channel' && currentStreamer && liveStatuses[currentStreamer.name] === 'online')" class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
             <div class="min-w-0">
               <div x-ref="playerContainer" @keydown.window="handlePlayerShortcut" @keydown.escape.window="closePlayerPopovers" class="player-stage overflow-hidden rounded-xl bg-black shadow-2xl shadow-black/15">
@@ -166,10 +154,10 @@
                 <div x-show="view === 'record' && currentRecord && !playerSnapshot.hasPlayed && posterFailed" class="pointer-events-none absolute inset-0 z-10 bg-[#080809]"></div>
 
                 <div x-show="playerSnapshot.message" class="pointer-events-none absolute inset-x-4 top-4 z-30 flex justify-center" aria-live="polite"><div class="max-w-lg rounded-full bg-black/75 px-4 py-2 text-center text-xs font-bold text-white backdrop-blur" x-text="playerSnapshot.message"></div></div>
-                <button x-show="playerSnapshot.autoplayState === 'blocked'" type="button" @click="togglePlayback({ showFeedback: true, forcePlay: true })" class="absolute left-1/2 top-1/2 z-30 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white text-black shadow-xl focus-visible:outline focus-visible:outline-4 focus-visible:outline-white/60" aria-label="開始播放直播">
+                <button x-show="playerSnapshot.autoplayState === 'blocked'" type="button" @click="togglePlayback({ showFeedback: true, forcePlay: true })" class="player-overlay-action absolute left-1/2 top-1/2 z-30 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white text-black shadow-xl" aria-label="開始播放直播">
                   <svg data-heroicon="play" class="size-9" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
                 </button>
-                <button x-show="['offline', 'error'].includes(playerSnapshot.playerState)" type="button" @click="retryPlayer" class="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white px-5 py-3 text-sm font-black text-black">重新嘗試</button>
+                <button x-show="['offline', 'error'].includes(playerSnapshot.playerState)" type="button" @click="retryPlayer" class="player-overlay-action absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white px-5 py-3 text-sm font-black text-black">重新嘗試</button>
 
                 <template x-for="feedback in playerGestureFeedback ? [playerGestureFeedback] : []" :key="feedback.id">
                   <div :class="feedback.type === 'playback' ? 'player-gesture-feedback-center' : (feedback.direction === 'left' ? 'player-gesture-feedback-left' : 'player-gesture-feedback-right')" class="player-gesture-feedback" role="status" aria-live="polite" aria-atomic="true">
@@ -304,7 +292,7 @@
               <div id="player-title-block" class="relative mt-5 border-b border-[var(--line)] pb-6">
                 <div class="flex items-start justify-between gap-4">
                   <div class="min-w-0 flex-1">
-                    <template x-if="view === 'channel' && currentStreamer"><div><p class="flex items-center gap-2 text-xs font-black tracking-[0.14em] text-[var(--live)]"><span class="size-2 rounded-full bg-[var(--live)]"></span> LIVE CHANNEL</p><h2 class="mt-2 break-all text-2xl font-black" x-text="currentStreamer.name"></h2><p class="mt-2 text-sm text-[var(--muted)]">直播會以靜音自動播放；可隨時開啟聲音或回看 DVR。</p></div></template>
+                    <template x-if="view === 'channel' && currentStreamer"><div><p class="flex items-center gap-2 text-xs font-black tracking-[0.14em] text-[var(--ink)]"><span class="size-2 rounded-full bg-[var(--live)]"></span> LIVE CHANNEL</p><h2 class="mt-2 break-all text-2xl font-black" x-text="currentStreamer.name"></h2><p class="mt-2 text-sm text-[var(--muted)]">直播會以靜音自動播放；可隨時開啟聲音或回看 DVR。</p></div></template>
                     <template x-if="view === 'record' && currentRecord"><div><p class="eyebrow">REPLAY</p><h1 class="mt-2 break-all text-xl font-black sm:text-2xl" x-text="currentRecord.filename"></h1><dl class="mt-4 flex flex-wrap gap-x-7 gap-y-3 text-sm"><div><dt class="text-xs text-[var(--muted)]">主播</dt><dd class="mt-1 font-black" x-text="currentRecord.streamer"></dd></div><div><dt class="text-xs text-[var(--muted)]">直播時間（Asia/Taipei）</dt><dd class="mt-1 font-black" x-text="formatDate(currentRecord.timestamp)"></dd></div><div><dt class="text-xs text-[var(--muted)]">直播長度</dt><dd class="mt-1 font-black" x-text="formatDuration(currentRecord.duration)"></dd></div><div><dt class="text-xs text-[var(--muted)]">檔案大小</dt><dd class="mt-1 font-black" x-text="formatBytes(currentRecord.size)"></dd></div></dl><div class="mt-4 flex flex-wrap gap-4"><a :href="streamerPath(currentRecord.streamer)" class="text-sm font-black hover:underline">前往主播頻道 →</a><a :href="recordUrl(currentRecord.filename)" target="_blank" rel="noreferrer" class="text-sm font-black hover:underline">直接開啟檔案 ↗</a></div></div></template>
                   </div>
                   <div class="relative shrink-0" @click.outside="shareOpen = false">
@@ -355,15 +343,30 @@
                 <div class="shrink-0 border-b border-[var(--line)] p-4">
                   <div class="hidden items-center justify-between gap-3 xl:flex"><div><p class="eyebrow">LIVE CHAT</p><h2 class="mt-1 text-lg font-black">聊天室</h2></div><span class="rounded-lg bg-[var(--soft)] px-2.5 py-1.5 text-xs font-black" x-text="`${chatViewerCount.toLocaleString('zh-TW')} 人正在看`"></span></div>
                   <button type="button" @click="nicknamePanelOpen = !nicknamePanelOpen" class="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-xs font-bold text-[var(--muted)] hover:text-[var(--ink)] xl:mt-3" :aria-expanded="nicknamePanelOpen"><span class="truncate" x-text="`暱稱：${nickname}`"></span><span x-text="nicknamePanelOpen ? '收合' : '變更'"></span></button>
-                  <form x-show="nicknamePanelOpen" @submit.prevent="saveNickname" class="mt-2 flex gap-2"><label class="sr-only" for="chat-nickname">你的暱稱</label><input id="chat-nickname" type="text" x-model="nickname" autocomplete="nickname" class="min-h-10 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--page)] px-3 text-sm text-[var(--ink)]" /><button type="submit" class="rounded-lg border border-[var(--line-strong)] px-3 text-xs font-black">儲存</button></form>
+                  <form x-show="nicknamePanelOpen" @submit.prevent="saveNickname" class="mt-2 flex gap-2"><label class="sr-only" for="chat-nickname">你的暱稱</label><input id="chat-nickname" type="text" x-model="nickname" autocomplete="nickname" class="min-h-10 min-w-0 flex-1 rounded-lg border border-[var(--line-strong)] bg-[var(--page)] px-3 text-sm text-[var(--ink)]" /><button type="submit" class="rounded-lg border border-[var(--line-strong)] px-3 text-xs font-black">儲存</button></form>
                 </div>
                 <div x-ref="chatList" class="chat-scroll min-h-0 flex-1 overflow-y-auto p-4" aria-live="polite">
                   <div x-show="!chatMessages.length" class="grid h-full min-h-48 place-items-center text-center text-sm text-[var(--muted)]"><p>還沒有訊息。<br />成為第一個開口的人吧。</p></div>
                   <ol class="space-y-3"><template x-for="message in chatMessages" :key="message.id"><li class="border-b border-[var(--line)] px-1 py-3 last:border-0"><div class="flex items-baseline justify-between gap-2"><strong class="truncate text-xs" x-text="message.name"></strong><time class="shrink-0 text-[10px] text-[var(--muted)]" x-text="new Date(message.receivedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })"></time></div><p class="mt-1 break-words text-sm leading-5" x-text="message.msg"></p></li></template></ol>
                 </div>
-                <form @submit.prevent="sendChat" class="shrink-0 border-t border-[var(--line)] p-4"><label class="sr-only" for="chat-message">聊天訊息</label><div class="flex gap-2"><input id="chat-message" type="text" x-model="chatDraft" :disabled="chatState !== 'open'" placeholder="輸入訊息…" class="min-h-11 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--page)] px-3 text-sm text-[var(--ink)] disabled:opacity-50" /><button type="submit" :disabled="chatState !== 'open' || !chatDraft.trim()" class="min-h-11 rounded-lg bg-[var(--ink)] px-4 text-sm font-black text-[var(--page)] disabled:opacity-40">送出</button></div></form>
+                <form @submit.prevent="sendChat" class="shrink-0 border-t border-[var(--line)] p-4"><label class="sr-only" for="chat-message">聊天訊息</label><div class="flex gap-2"><input id="chat-message" type="text" x-model="chatDraft" :disabled="chatState !== 'open'" placeholder="輸入訊息…" class="min-h-11 min-w-0 flex-1 rounded-lg border border-[var(--line-strong)] bg-[var(--page)] px-3 text-sm text-[var(--ink)] disabled:opacity-50" /><button type="submit" :disabled="chatState !== 'open' || !chatDraft.trim()" class="min-h-11 rounded-lg bg-[var(--ink)] px-4 text-sm font-black text-[var(--page)] disabled:opacity-40">送出</button></div></form>
               </div>
             </aside>
+          </div>
+
+          <div x-show="view === 'channel' && currentStreamer" :class="liveStatuses[currentStreamer?.name] === 'online' ? 'mt-7' : 'pt-7 sm:pt-10'" class="flex flex-col gap-5 border-b border-[var(--line)] pb-7 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex min-w-0 items-center gap-4">
+                <span class="relative grid size-16 shrink-0 place-items-center rounded-full bg-[var(--ink)] text-xl font-black text-[var(--page)] sm:size-20"><span x-text="streamerInitial(currentStreamer?.name)"></span><span x-show="liveStatuses[currentStreamer?.name] === 'online'" class="absolute bottom-0 right-0 size-4 rounded-full border-[3px] border-[var(--page)] bg-[var(--live)]"></span></span>
+                <div class="min-w-0"><p class="eyebrow">CHANNEL</p><h1 class="mt-1 break-all text-3xl font-black tracking-[-0.04em] sm:text-5xl" x-text="currentStreamer?.name || ''"></h1><p class="mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]"><span class="size-2 rounded-full" :class="statusDotClass(currentStreamer?.name)"></span><span x-text="statusLabel(currentStreamer?.name)"></span><span aria-hidden="true">·</span><span x-text="`${currentStreamer?.recordCount || 0} 份直播紀錄`"></span></p></div>
+              </div>
+              <a :href="allRecordsForCurrentStreamerUrl()" class="shrink-0 rounded-lg border border-[var(--line-strong)] px-4 py-2.5 text-center text-sm font-black hover:bg-[var(--soft)]">瀏覽全部紀錄</a>
+          </div>
+
+          <div x-show="view === 'channel' && currentStreamer && liveStatuses[currentStreamer.name] === 'checking'" class="channel-status-band mb-8 text-center" aria-live="polite">
+            <span class="mx-auto block size-8 animate-spin rounded-full border-4 border-[var(--line)] border-t-[var(--accent)]"></span><p class="mt-4 font-black">正在確認直播狀態…</p>
+          </div>
+          <div x-show="view === 'channel' && currentStreamer && liveStatuses[currentStreamer.name] === 'offline'" class="channel-status-band mb-8 text-center">
+            <p class="text-xl font-black">這個頻道目前離線</p><p class="mt-2 text-sm text-[var(--muted)]">下方仍可觀看過去的直播紀錄；直播狀態會每 60 秒更新。</p>
           </div>
 
           <div x-show="view === 'channel' && currentStreamer" class="mt-12 border-t border-[var(--line)] pt-9">
@@ -377,7 +380,7 @@
               </div>
               <div class="mt-4 flex justify-end"><button type="button" @click="clearListFilters('channel')" :disabled="!channelList.active" class="filter-clear-button">清除全部篩選</button></div>
             </div>
-            <p x-show="channelList.rangeInvalid" class="mb-5 rounded-lg border border-red-400/50 bg-red-400/10 px-4 py-3 text-sm font-bold text-[var(--live)]" role="alert">開始日期不可晚於結束日期。</p>
+            <p x-show="channelList.rangeInvalid" class="mb-5 rounded-lg border border-red-400/50 bg-red-400/10 px-4 py-3 text-sm font-bold text-[var(--ink)]" role="alert">開始日期不可晚於結束日期。</p>
             <div class="mb-5 flex items-center justify-between gap-4"><p class="text-sm font-bold" x-text="`找到 ${filteredChannelRecords.length} 份紀錄`"></p><p class="text-xs text-[var(--muted)]" x-text="`已顯示 ${Math.min(channelList.visibleCount, filteredChannelRecords.length)} 份`"></p></div>
             <div x-show="channelRecords.length" class="media-grid grid gap-x-5 gap-y-8">
               <template x-for="record in channelRecords" :key="record.filename">
@@ -407,7 +410,7 @@
 
           <div id="records-grid" class="scroll-mt-24 py-8">
             <div class="mb-5 flex items-center justify-between gap-4"><p class="text-sm font-bold" x-text="`找到 ${filteredRecords.length} 份紀錄`"></p><p class="text-xs text-[var(--muted)]" x-text="`已顯示 ${Math.min(recordList.visibleCount, filteredRecords.length)} 份`"></p></div>
-            <p x-show="recordList.rangeInvalid" class="mb-5 rounded-lg border border-red-400/50 bg-red-400/10 px-4 py-3 text-sm font-bold text-[var(--live)]" role="alert">開始日期不可晚於結束日期。</p>
+            <p x-show="recordList.rangeInvalid" class="mb-5 rounded-lg border border-red-400/50 bg-red-400/10 px-4 py-3 text-sm font-bold text-[var(--ink)]" role="alert">開始日期不可晚於結束日期。</p>
             <div x-show="visibleRecords.length" class="media-grid grid gap-x-5 gap-y-8">
               <template x-for="record in visibleRecords" :key="record.filename">
                 <a :href="recordPath(record.filename)" class="media-card group block min-w-0">
