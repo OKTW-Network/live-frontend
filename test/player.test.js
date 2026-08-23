@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPlayerController } from '../src/player/controller.js';
+import { migratePlayerStorage } from '../src/player/shared.js';
 
 class FakeEventTarget {
   constructor() { this.listeners = new Map(); }
@@ -116,6 +117,7 @@ class FakeStorage {
   constructor(values = {}) { this.values = new Map(Object.entries(values)); }
   getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
   setItem(key, value) { this.values.set(key, String(value)); }
+  removeItem(key) { this.values.delete(key); }
 }
 
 class FakeAudioNode {
@@ -326,8 +328,21 @@ test('volume zero mutes, unmute restores audible volume, and boost clamps above 
 
   harness.controller.setBoost(false);
   assert.equal(harness.snapshot.volumePercent, 100);
-  assert.equal(harness.storage.getItem('oktw.player.volumePercent'), '100');
+  assert.equal(harness.storage.getItem('onlive.player.volumePercent'), '100');
   await harness.controller.destroy();
+});
+
+test('legacy player preferences migrate once to ON LIVE keys', () => {
+  const storage = new FakeStorage({
+    'oktw.player.volumePercent': '145',
+    'onlive.player.selectedRate': '2',
+    'oktw.player.selectedRate': '4',
+  });
+  migratePlayerStorage(storage);
+  assert.equal(storage.getItem('onlive.player.volumePercent'), '145');
+  assert.equal(storage.getItem('onlive.player.selectedRate'), '2');
+  assert.equal(storage.getItem('oktw.player.volumePercent'), null);
+  assert.equal(storage.getItem('oktw.player.selectedRate'), null);
 });
 
 test('unsupported playback rate restores the previous selected and effective rate', async () => {

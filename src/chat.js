@@ -77,7 +77,7 @@ export class ChatClient {
       if (data.type === 'channelData' || (!('msg' in data) && !('message' in data))) return;
       const message = {
         id: `${data.uuid ?? 'anon'}-${Date.now()}-${this.messageSequence++}`,
-        name: String(data.name || 'anonymous'),
+        name: String(data.sentFrom || 'anonymous'),
         msg: String(data.msg ?? data.message ?? ''),
         receivedAt: Date.now(),
         uuid: data.uuid ?? null,

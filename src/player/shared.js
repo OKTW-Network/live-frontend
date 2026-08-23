@@ -1,9 +1,29 @@
 export const STORAGE_KEYS = Object.freeze({
+  volume: 'onlive.player.volumePercent',
+  boost: 'onlive.player.boostEnabled',
+  rate: 'onlive.player.selectedRate',
+  autoCatchUp: 'onlive.player.autoCatchUp',
+});
+
+const LEGACY_STORAGE_KEYS = Object.freeze({
   volume: 'oktw.player.volumePercent',
   boost: 'oktw.player.boostEnabled',
   rate: 'oktw.player.selectedRate',
   autoCatchUp: 'oktw.player.autoCatchUp',
 });
+
+export function migratePlayerStorage(storage) {
+  if (!storage) return;
+  for (const name of Object.keys(STORAGE_KEYS)) {
+    const currentKey = STORAGE_KEYS[name];
+    const legacyKey = LEGACY_STORAGE_KEYS[name];
+    const legacyValue = storage.getItem(legacyKey);
+    if (storage.getItem(currentKey) === null && legacyValue !== null) {
+      storage.setItem(currentKey, legacyValue);
+    }
+    if (legacyValue !== null) storage.removeItem?.(legacyKey);
+  }
+}
 
 export const MEDIA_EVENTS = Object.freeze([
   'loadedmetadata', 'playing', 'pause', 'waiting', 'stalled', 'canplay', 'ended', 'error',

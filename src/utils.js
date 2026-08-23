@@ -69,10 +69,45 @@ export function orderStreamersByStatus(streamers, statuses = {}) {
   });
 }
 
-export function filterRecords(records, { query = '', streamer = '', sort = 'newest' } = {}) {
+const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export function normalizeDateFilter(value) {
+  const match = String(value || '').match(datePattern);
+  if (!match) return '';
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (
+    date.getUTCFullYear() !== Number(year)
+    || date.getUTCMonth() !== Number(month) - 1
+    || date.getUTCDate() !== Number(day)
+  ) return '';
+  return `${year}-${month}-${day}`;
+}
+
+function taipeiDayBoundary(value, nextDay = false) {
+  const normalized = normalizeDateFilter(value);
+  if (!normalized) return null;
+  const [year, month, day] = normalized.split('-').map(Number);
+  return (Date.UTC(year, month - 1, day + Number(nextDay)) / 1000) - (8 * 60 * 60);
+}
+
+export function isDateRangeInverted({ from = '', to = '' } = {}) {
+  const fromValue = normalizeDateFilter(from);
+  const toValue = normalizeDateFilter(to);
+  return Boolean(fromValue && toValue && fromValue > toValue);
+}
+
+export function filterRecords(records, {
+  query = '', streamer = '', from = '', to = '', sort = 'newest',
+} = {}) {
+  if (isDateRangeInverted({ from, to })) return [];
   const needle = query.trim().toLocaleLowerCase('zh-TW');
+  const fromTimestamp = taipeiDayBoundary(from);
+  const toTimestamp = taipeiDayBoundary(to, true);
   const filtered = records.filter((record) => {
     if (streamer && record.streamer !== streamer) return false;
+    if (fromTimestamp !== null && record.timestamp < fromTimestamp) return false;
+    if (toTimestamp !== null && record.timestamp >= toTimestamp) return false;
     if (!needle) return true;
     return `${record.streamer} ${record.filename}`.toLocaleLowerCase('zh-TW').includes(needle);
   });
@@ -87,6 +122,8 @@ export function parseRecordQuery(value = '') {
   return {
     query: params.get('q') || '',
     streamer: params.get('streamer') || '',
+    from: normalizeDateFilter(params.get('from')),
+    to: normalizeDateFilter(params.get('to')),
     sort: params.get('sort') === 'oldest' ? 'oldest' : 'newest',
   };
 }
@@ -95,11 +132,35 @@ export function serializeRecordQuery(filters = {}) {
   const normalized = parseRecordQuery(new URLSearchParams([
     ['q', filters.query || ''],
     ['streamer', filters.streamer || ''],
+    ['from', filters.from || ''],
+    ['to', filters.to || ''],
     ['sort', filters.sort || ''],
   ]));
   const params = new URLSearchParams();
   if (normalized.query) params.set('q', normalized.query);
   if (normalized.streamer) params.set('streamer', normalized.streamer);
+  if (normalized.from) params.set('from', normalized.from);
+  if (normalized.to) params.set('to', normalized.to);
+  if (normalized.sort === 'oldest') params.set('sort', 'oldest');
+  return params.size ? `?${params.toString()}` : '';
+}
+
+export function parseChannelRecordQuery(value = '') {
+  const { query, from, to, sort } = parseRecordQuery(value);
+  return { query, from, to, sort };
+}
+
+export function serializeChannelRecordQuery(filters = {}) {
+  const normalized = parseChannelRecordQuery(new URLSearchParams([
+    ['q', filters.query || ''],
+    ['from', filters.from || ''],
+    ['to', filters.to || ''],
+    ['sort', filters.sort || ''],
+  ]));
+  const params = new URLSearchParams();
+  if (normalized.query) params.set('q', normalized.query);
+  if (normalized.from) params.set('from', normalized.from);
+  if (normalized.to) params.set('to', normalized.to);
   if (normalized.sort === 'oldest') params.set('sort', 'oldest');
   return params.size ? `?${params.toString()}` : '';
 }
@@ -115,6 +176,22 @@ export function createRecordViewSnapshot({ filters = {}, visibleCount = PAGE_SIZ
 export function recordViewSnapshotMatches(snapshot, filters) {
   if (!snapshot || typeof snapshot !== 'object') return false;
   return serializeRecordQuery(snapshot.filters) === serializeRecordQuery(filters);
+}
+
+export function createChannelViewSnapshot({
+  streamer = '', filters = {}, visibleCount = PAGE_SIZE, scrollY = 0,
+} = {}) {
+  return {
+    streamer,
+    filters: parseChannelRecordQuery(serializeChannelRecordQuery(filters)),
+    visibleCount: Math.max(PAGE_SIZE, Math.floor(Number(visibleCount) || PAGE_SIZE)),
+    scrollY: Math.max(0, Number(scrollY) || 0),
+  };
+}
+
+export function channelViewSnapshotMatches(snapshot, streamer, filters) {
+  if (!snapshot || typeof snapshot !== 'object' || snapshot.streamer !== streamer) return false;
+  return serializeChannelRecordQuery(snapshot.filters) === serializeChannelRecordQuery(filters);
 }
 
 const fullDateFormatter = new Intl.DateTimeFormat('zh-TW-u-ca-gregory', {
@@ -225,17 +302,17 @@ export function metadataForPath(pathname) {
   const defaultDescription = '瀏覽主播、觀看正在進行的直播與直播紀錄，並在即時聊天室一起參與。';
   const route = parseRoute(pathname);
   if (route.view === 'home') {
-    return { title: 'OKTW Live — 直播、主播與直播紀錄', description: defaultDescription };
+    return { title: 'ON LIVE — 直播、主播與直播紀錄', description: defaultDescription };
   }
   if (route.view === 'records') {
-    return { title: '直播紀錄 — OKTW Live', description: '搜尋、篩選並播放 OKTW Live 的所有直播紀錄。' };
+    return { title: '直播紀錄 — ON LIVE', description: '搜尋、篩選並播放 ON LIVE 的所有直播紀錄。' };
   }
   if (route.view === 'channel') {
-    return { title: `${route.streamer} — OKTW Live`, description: `觀看 ${route.streamer} 的即時直播與過去直播紀錄。` };
+    return { title: `${route.streamer} — ON LIVE`, description: `觀看 ${route.streamer} 的即時直播與過去直播紀錄。` };
   }
   if (route.view === 'record') {
     const match = route.filename.match(filenamePattern);
-    if (match) return { title: `${match[1]} 直播紀錄 — OKTW Live`, description: `播放 ${route.filename} 直播紀錄。` };
+    if (match) return { title: `${match[1]} 直播紀錄 — ON LIVE`, description: `播放 ${route.filename} 直播紀錄。` };
   }
-  return { title: '找不到頁面 — ON Live', description: defaultDescription };
+  return { title: '找不到頁面 — ON LIVE', description: defaultDescription };
 }

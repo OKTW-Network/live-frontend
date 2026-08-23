@@ -16,7 +16,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     color-scheme: dark;
     --page: #0e0e10;
     --panel: #18181b;
@@ -28,6 +28,32 @@
     --accent: #f3f3f4;
     --accent-ink: #f3f3f4;
   }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f7f7f8;
+  --panel: #ffffff;
+  --soft: #ededf0;
+  --ink: #18181b;
+  --muted: #686870;
+  --line: #e1e1e5;
+  --line-strong: #b8b8bf;
+  --accent: #18181b;
+  --accent-ink: #18181b;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0e0e10;
+  --panel: #18181b;
+  --soft: #242427;
+  --ink: #f3f3f4;
+  --muted: #adadb8;
+  --line: #29292e;
+  --line-strong: #55555d;
+  --accent: #f3f3f4;
+  --accent-ink: #f3f3f4;
 }
 
 * { box-sizing: border-box; }
@@ -79,9 +105,133 @@ a, button, input, select { outline-offset: 4px; }
   letter-spacing: .14em;
 }
 
-.media-card:focus-visible { border-radius: .75rem; }
+.theme-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, 1.9rem);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  background: var(--panel);
+}
+
+.theme-icon-button {
+  display: grid;
+  width: 1.9rem;
+  height: 2.15rem;
+  place-items: center;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.theme-icon-button:last-child { border-right: 0; }
+.theme-icon-button svg { width: .95rem; height: .95rem; }
+.theme-icon-button:hover { background: var(--soft); }
+.theme-icon-button[aria-pressed="true"] { background: var(--ink); color: var(--page); }
+.theme-icon-button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--ink); outline-offset: -3px; }
+
+.media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+}
+
+.media-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+  background: var(--panel);
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.media-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-strong);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 10%);
+}
+
+.media-card:focus-visible {
+  border-radius: .75rem;
+  border-color: var(--line-strong);
+}
+
+.media-card-media { border-radius: 0; }
+.media-card-body { padding: .8rem .9rem .9rem; }
+
+.filter-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+}
+
+.filter-band,
+.channel-status-band {
+  margin-inline: -1rem;
+  border-block: 1px solid var(--line);
+  padding-inline: 1rem;
+  background: var(--panel);
+}
+
+.filter-band { padding-block: 1.25rem; }
+.channel-status-band { padding-block: 2.5rem; }
+
+@media (min-width: 40rem) {
+  .filter-band,
+  .channel-status-band { margin-inline: -1.5rem; padding-inline: 1.5rem; }
+}
+
+@media (min-width: 64rem) {
+  .filter-band,
+  .channel-status-band { margin-inline: -2rem; padding-inline: 2rem; }
+}
+
+.filter-input {
+  min-height: 2.75rem;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  padding: 0 .85rem;
+  background: var(--page);
+  color: var(--ink);
+  font-size: .875rem;
+}
+
+.filter-clear-button {
+  min-height: 2.5rem;
+  border: 1px solid var(--line-strong);
+  border-radius: .5rem;
+  padding: 0 .9rem;
+  background: var(--page);
+  color: var(--ink);
+  font-size: .75rem;
+  font-weight: 900;
+  transition: background-color 150ms ease;
+}
+
+.filter-clear-button:hover:not(:disabled) { background: var(--soft); }
+.filter-clear-button:disabled { cursor: not-allowed; opacity: .4; }
+
+.load-more-button {
+  min-height: 3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 0 1.75rem;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: .875rem;
+  font-weight: 900;
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+
+.load-more-button:hover { transform: translateY(-2px); background: var(--soft); }
 
 .chat-scroll { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
+
+@media (min-width: 80rem) {
+  .watch-chat {
+    height: var(--player-shell-height, auto);
+    min-height: 0;
+    max-height: none;
+  }
+}
 
 .player-stage {
   isolation: isolate;

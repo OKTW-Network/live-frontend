@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import {
   deriveStreamers,
   filterRecords,
+  isDateRangeInverted,
   normalizeRecords,
+  parseChannelRecordQuery,
   parseRoute,
   probeLive,
   serializeRecordQuery,
+  serializeChannelRecordQuery,
   parseRecordQuery,
 } from '../src/utils.js';
 
@@ -42,11 +45,39 @@ test('parses supported routes and serializes record filters without legacy page 
   assert.deepEqual(parseRecordQuery('?q=panda&streamer=cute_panda&sort=oldest&page=8'), {
     query: 'panda',
     streamer: 'cute_panda',
+    from: '',
+    to: '',
     sort: 'oldest',
   });
   assert.equal(
     serializeRecordQuery({ query: 'panda', streamer: 'cute_panda', sort: 'oldest', page: 8 }),
     '?q=panda&streamer=cute_panda&sort=oldest',
+  );
+});
+
+test('filters inclusive Asia/Taipei calendar days and serializes date ranges', () => {
+  const timestamp = (value) => Date.parse(value) / 1000;
+  const records = [
+    { streamer: 'panda', filename: 'start.mp4', timestamp: timestamp('2026-08-20T00:00:00+08:00') },
+    { streamer: 'panda', filename: 'end.mp4', timestamp: timestamp('2026-08-21T23:59:59+08:00') },
+    { streamer: 'panda', filename: 'outside.mp4', timestamp: timestamp('2026-08-22T00:00:00+08:00') },
+  ];
+  assert.deepEqual(
+    filterRecords(records, { from: '2026-08-20', to: '2026-08-21' }).map((record) => record.filename),
+    ['start.mp4', 'end.mp4'],
+  );
+  assert.equal(isDateRangeInverted({ from: '2026-08-22', to: '2026-08-21' }), true);
+  assert.deepEqual(filterRecords(records, { from: '2026-08-22', to: '2026-08-21' }), []);
+  assert.deepEqual(parseChannelRecordQuery('?q=start&from=2026-08-20&to=not-a-date&sort=oldest'), {
+    query: 'start', from: '2026-08-20', to: '', sort: 'oldest',
+  });
+  assert.equal(
+    serializeChannelRecordQuery({ query: 'start', from: '2026-08-20', to: '2026-08-21', sort: 'oldest' }),
+    '?q=start&from=2026-08-20&to=2026-08-21&sort=oldest',
+  );
+  assert.equal(
+    serializeRecordQuery({ streamer: 'panda', from: '2026-08-20', to: '2026-08-21' }),
+    '?streamer=panda&from=2026-08-20&to=2026-08-21',
   );
 });
 

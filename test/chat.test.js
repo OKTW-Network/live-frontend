@@ -68,8 +68,13 @@ test('chat joins with nickname, caps messages, and reconnects after unexpected c
   assert.equal(count, 7);
   assert.equal(messages.length, 0);
 
+  socket.emit('message', { data: JSON.stringify({ msg: 'ccc', sentFrom: 'aaa', type: 'bulletScreenMessage', uuid: 1522 }) });
+  assert.deepEqual(messages.map(({ name, msg }) => ({ name, msg })), [
+    { name: 'aaa', msg: 'ccc' },
+  ]);
+
   for (let index = 0; index < MAX_MESSAGES + 5; index += 1) {
-    socket.emit('message', { data: JSON.stringify({ name: 'viewer', msg: `message-${index}`, uuid: 3 }) });
+    socket.emit('message', { data: JSON.stringify({ sentFrom: 'viewer', msg: `message-${index}`, type: 'bulletScreenMessage', uuid: 3 }) });
   }
   assert.equal(messages.length, MAX_MESSAGES);
   assert.equal(messages[0].msg, 'message-5');

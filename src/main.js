@@ -6,9 +6,12 @@ import {
   isPlayerGestureBlockedTarget,
 } from './player-gestures.js';
 import { createPlayerController, PLAYER_RATES } from './player/controller.js';
+import { migratePlayerStorage } from './player/shared.js';
 import {
   PAGE_SIZE,
   RECORD_LIST_URL,
+  channelViewSnapshotMatches,
+  createChannelViewSnapshot,
   createRecordViewSnapshot,
   deriveStreamers,
   filterRecords,
@@ -19,6 +22,8 @@ import {
   nextThumbnailExtension,
   normalizeRecords,
   orderStreamersByStatus,
+  isDateRangeInverted,
+  parseChannelRecordQuery,
   parseRecordQuery,
   parseRoute,
   probeLive,
@@ -26,10 +31,16 @@ import {
   recordUrl,
   recordViewSnapshotMatches,
   selectLiveStreamers,
+  serializeChannelRecordQuery,
   serializeRecordQuery,
   streamerPath,
   thumbnailUrl,
 } from './utils.js';
+import {
+  THEME_STORAGE_KEY,
+  applyThemePreference,
+  normalizeThemePreference,
+} from './theme.js';
 import './styles.css';
 
 const CDN_SCRIPTS = {
@@ -74,6 +85,24 @@ function applyMetadata(pathname) {
   ensureMeta('meta[name="twitter:description"]', { name: 'twitter:description' }).setAttribute('content', metadata.description);
 }
 
+function historyIndexForState(state) {
+  const value = state?.onLiveIndex ?? state?.oktwIndex;
+  return Number.isInteger(value) ? value : 0;
+}
+
+function historyStateWithoutLegacy(state) {
+  const { oktwIndex: _legacyIndex, ...currentState } = state || {};
+  return currentState;
+}
+
+function storedThemePreference() {
+  try {
+    return normalizeThemePreference(localStorage.getItem(THEME_STORAGE_KEY));
+  } catch {
+    return 'system';
+  }
+}
+
 function registerApp(Alpine) {
   Alpine.data('liveApp', () => ({
     loading: true,
@@ -85,8 +114,16 @@ function registerApp(Alpine) {
     currentStreamer: null,
     currentRecord: null,
     notFoundMessage: '',
-    recordFilters: { query: '', streamer: '', sort: 'newest' },
+    recordFilters: { query: '', streamer: '', from: '', to: '', sort: 'newest' },
     recordVisibleCount: PAGE_SIZE,
+    channelFilters: { query: '', from: '', to: '', sort: 'newest' },
+    channelVisibleCount: PAGE_SIZE,
+    listObserver: null,
+    playerShellObserver: null,
+    playerShellHeight: 0,
+    themePreference: storedThemePreference(),
+    themeMedia: null,
+    themeMediaHandler: null,
     historyIndex: 0,
     routeRun: 0,
     player: null,
@@ -162,6 +199,15 @@ function registerApp(Alpine) {
     beforeUnloadHandler: null,
 
     async init() {
+      migratePlayerStorage(localStorage);
+      this.themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+      this.themeMediaHandler = () => {
+        if (this.themePreference === 'system') this.syncTheme();
+      };
+      if (this.themeMedia.addEventListener) this.themeMedia.addEventListener('change', this.themeMediaHandler);
+      else this.themeMedia.addListener?.(this.themeMediaHandler);
+      this.syncTheme();
+
       this.player = createPlayerController({
         video: this.$refs.video,
         container: this.$refs.playerContainer,
@@ -216,12 +262,12 @@ function registerApp(Alpine) {
       });
 
       history.scrollRestoration = 'manual';
-      this.historyIndex = Number.isInteger(history.state?.oktwIndex) ? history.state.oktwIndex : 0;
-      history.replaceState({ ...(history.state || {}), oktwIndex: this.historyIndex }, '', location.href);
+      this.historyIndex = historyIndexForState(history.state);
+      history.replaceState({ ...historyStateWithoutLegacy(history.state), onLiveIndex: this.historyIndex }, '', location.href);
 
       this.navigationHandler = (event) => this.handleLink(event);
       this.popstateHandler = (event) => {
-        this.historyIndex = Number.isInteger(event.state?.oktwIndex) ? event.state.oktwIndex : 0;
+        this.historyIndex = historyIndexForState(event.state);
         this.transitionToLocation(event.state, { isPop: true });
       };
       this.visibilityHandler = () => {
@@ -230,7 +276,7 @@ function registerApp(Alpine) {
         else if (this.view === 'channel' && this.currentStreamer) this.startChannelProbes(this.currentStreamer.name);
       };
       this.beforeUnloadHandler = () => {
-        this.saveRecordViewSnapshot();
+        this.saveListViewSnapshot();
         this.destroy();
       };
       document.addEventListener('click', this.navigationHandler);
@@ -240,6 +286,62 @@ function registerApp(Alpine) {
 
       await this.loadRecords();
       await this.transitionToLocation(history.state, { initial: true });
+      this.setupPlayerShellObserver();
+      this.setupListObserver();
+    },
+
+    syncTheme() {
+      applyThemePreference(this.themePreference, {
+        prefersDark: this.themeMedia?.matches === true,
+      });
+    },
+
+    setThemePreference(value) {
+      this.themePreference = normalizeThemePreference(value);
+      try { localStorage.setItem(THEME_STORAGE_KEY, this.themePreference); } catch { /* optional */ }
+      this.syncTheme();
+    },
+
+    setupListObserver() {
+      if (typeof IntersectionObserver !== 'function') return;
+      this.listObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          if (entry.target === this.$refs.recordsLoadSentinel && this.view === 'records') {
+            this.loadMoreRecords();
+          } else if (entry.target === this.$refs.channelLoadSentinel && this.view === 'channel') {
+            this.loadMoreChannelRecords();
+          }
+        }
+      }, { rootMargin: '600px 0px' });
+      this.refreshListObserver();
+    },
+
+    setupPlayerShellObserver() {
+      const shell = this.$refs.playerShell;
+      if (!shell || typeof ResizeObserver !== 'function') return;
+      this.playerShellObserver?.disconnect();
+      this.playerShellObserver = new ResizeObserver((entries) => {
+        const entry = entries.find(({ target }) => target === shell);
+        if (!entry) return;
+        const borderBox = Array.isArray(entry.borderBoxSize)
+          ? entry.borderBoxSize[0]
+          : entry.borderBoxSize;
+        const height = Number(borderBox?.blockSize ?? entry.contentRect.height);
+        if (Number.isFinite(height) && height > 0) {
+          this.playerShellHeight = Math.round(height * 100) / 100;
+        }
+      });
+      this.playerShellObserver.observe(shell);
+      const initialHeight = shell.getBoundingClientRect().height;
+      if (initialHeight > 0) this.playerShellHeight = Math.round(initialHeight * 100) / 100;
+    },
+
+    refreshListObserver() {
+      if (!this.listObserver) return;
+      this.listObserver.disconnect();
+      if (this.$refs.recordsLoadSentinel) this.listObserver.observe(this.$refs.recordsLoadSentinel);
+      if (this.$refs.channelLoadSentinel) this.listObserver.observe(this.$refs.channelLoadSentinel);
     },
 
     async loadRecords() {
@@ -275,7 +377,7 @@ function registerApp(Alpine) {
       const sameDocument = url.pathname === location.pathname && url.search === location.search;
       if (sameDocument && url.hash) {
         event.preventDefault();
-        history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+        history.replaceState(historyStateWithoutLegacy(history.state), '', `${url.pathname}${url.search}${url.hash}`);
         document.querySelector(url.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
@@ -289,13 +391,13 @@ function registerApp(Alpine) {
     },
 
     navigate(href, { replace = false } = {}) {
-      this.saveRecordViewSnapshot();
+      this.saveListViewSnapshot();
       const url = new URL(href, location.origin);
       if (replace) {
-        history.replaceState({ ...(history.state || {}), oktwIndex: this.historyIndex }, '', `${url.pathname}${url.search}${url.hash}`);
+        history.replaceState({ ...historyStateWithoutLegacy(history.state), onLiveIndex: this.historyIndex }, '', `${url.pathname}${url.search}${url.hash}`);
       } else {
         this.historyIndex += 1;
-        history.pushState({ oktwIndex: this.historyIndex }, '', `${url.pathname}${url.search}${url.hash}`);
+        history.pushState({ onLiveIndex: this.historyIndex }, '', `${url.pathname}${url.search}${url.hash}`);
       }
       this.transitionToLocation(history.state);
     },
@@ -304,6 +406,7 @@ function registerApp(Alpine) {
       const update = async () => {
         await this.resolveLocation(state, options);
         await Alpine.nextTick();
+        this.refreshListObserver();
       };
 
       if (options.initial || typeof document.startViewTransition !== 'function') {
@@ -358,12 +461,16 @@ function registerApp(Alpine) {
         if (this.activeMediaKey && this.activeMediaKey !== `live:${streamer.name}`) this.deactivateMedia();
         this.currentStreamer = streamer;
         this.currentRecord = null;
+        this.channelFilters = parseChannelRecordQuery(location.search);
+        const snapshot = state?.channelView;
+        const canRestore = isPop && channelViewSnapshotMatches(snapshot, streamer.name, this.channelFilters);
+        this.channelVisibleCount = canRestore ? snapshot.visibleCount : PAGE_SIZE;
         this.view = 'channel';
         if (!['online', 'offline'].includes(this.liveStatuses[streamer.name])) {
           this.liveStatuses = { ...this.liveStatuses, [streamer.name]: 'checking' };
         }
         applyMetadata(location.pathname);
-        this.restorePosition(run, { hash: location.hash });
+        this.restorePosition(run, canRestore ? { top: snapshot.scrollY } : { hash: location.hash });
         this.startChannelProbes(streamer.name);
         return;
       }
@@ -410,18 +517,32 @@ function registerApp(Alpine) {
       }));
     },
 
-    saveRecordViewSnapshot() {
-      if (this.view !== 'records' || parseRoute(location.pathname).view !== 'records') return;
-      const recordView = createRecordViewSnapshot({
-        filters: this.recordFilters,
-        visibleCount: this.recordVisibleCount,
-        scrollY: window.scrollY,
-      });
-      history.replaceState(
-        { ...(history.state || {}), oktwIndex: this.historyIndex, recordView },
-        '',
-        `/records${serializeRecordQuery(this.recordFilters)}`,
-      );
+    saveListViewSnapshot() {
+      const route = parseRoute(location.pathname);
+      if (this.view === 'records' && route.view === 'records') {
+        const recordView = createRecordViewSnapshot({
+          filters: this.recordFilters,
+          visibleCount: this.recordVisibleCount,
+          scrollY: window.scrollY,
+        });
+        history.replaceState(
+          { ...historyStateWithoutLegacy(history.state), onLiveIndex: this.historyIndex, recordView },
+          '',
+          `/records${serializeRecordQuery(this.recordFilters)}`,
+        );
+      } else if (this.view === 'channel' && route.view === 'channel' && this.currentStreamer) {
+        const channelView = createChannelViewSnapshot({
+          streamer: this.currentStreamer.name,
+          filters: this.channelFilters,
+          visibleCount: this.channelVisibleCount,
+          scrollY: window.scrollY,
+        });
+        history.replaceState(
+          { ...historyStateWithoutLegacy(history.state), onLiveIndex: this.historyIndex, channelView },
+          '',
+          `${streamerPath(this.currentStreamer.name)}${serializeChannelRecordQuery(this.channelFilters)}`,
+        );
+      }
     },
 
     applyRecordFilters() {
@@ -429,18 +550,53 @@ function registerApp(Alpine) {
       this.recordVisibleCount = PAGE_SIZE;
       history.replaceState(
         {
-          ...(history.state || {}),
-          oktwIndex: this.historyIndex,
+          ...historyStateWithoutLegacy(history.state),
+          onLiveIndex: this.historyIndex,
           recordView: createRecordViewSnapshot({ filters: this.recordFilters, visibleCount: PAGE_SIZE, scrollY: window.scrollY }),
         },
         '',
         `/records${serializeRecordQuery(this.recordFilters)}`,
       );
+      Alpine.nextTick(() => this.refreshListObserver());
+    },
+
+    clearRecordFilters() {
+      this.recordFilters = { query: '', streamer: '', from: '', to: '', sort: 'newest' };
+      this.applyRecordFilters();
+    },
+
+    applyChannelFilters() {
+      if (this.view !== 'channel' || !this.currentStreamer) return;
+      this.channelVisibleCount = PAGE_SIZE;
+      const channelView = createChannelViewSnapshot({
+        streamer: this.currentStreamer.name,
+        filters: this.channelFilters,
+        visibleCount: PAGE_SIZE,
+        scrollY: window.scrollY,
+      });
+      history.replaceState(
+        { ...historyStateWithoutLegacy(history.state), onLiveIndex: this.historyIndex, channelView },
+        '',
+        `${streamerPath(this.currentStreamer.name)}${serializeChannelRecordQuery(this.channelFilters)}`,
+      );
+      Alpine.nextTick(() => this.refreshListObserver());
+    },
+
+    clearChannelFilters() {
+      this.channelFilters = { query: '', from: '', to: '', sort: 'newest' };
+      this.applyChannelFilters();
     },
 
     loadMoreRecords() {
+      if (!this.hasMoreRecords || this.recordRangeInvalid) return;
       this.recordVisibleCount += PAGE_SIZE;
-      this.saveRecordViewSnapshot();
+      this.saveListViewSnapshot();
+    },
+
+    loadMoreChannelRecords() {
+      if (!this.hasMoreChannelRecords || this.channelRangeInvalid) return;
+      this.channelVisibleCount += PAGE_SIZE;
+      this.saveListViewSnapshot();
     },
 
     backFromRecord() {
@@ -803,6 +959,15 @@ function registerApp(Alpine) {
     destroy() {
       this.stopProbes();
       this.deactivateMedia();
+      this.listObserver?.disconnect();
+      this.listObserver = null;
+      this.playerShellObserver?.disconnect();
+      this.playerShellObserver = null;
+      this.playerShellHeight = 0;
+      if (this.themeMedia?.removeEventListener) this.themeMedia.removeEventListener('change', this.themeMediaHandler);
+      else this.themeMedia?.removeListener?.(this.themeMediaHandler);
+      this.themeMedia = null;
+      this.themeMediaHandler = null;
       Alpine.raw(this.playerGestures)?.destroy();
       this.playerGestures = null;
       Alpine.raw(this.playerPlaybackCoordinator)?.cancel();
@@ -843,6 +1008,17 @@ function registerApp(Alpine) {
     formatDuration,
     formatBytes,
 
+    allRecordsForCurrentStreamerUrl() {
+      if (!this.currentStreamer) return '/records';
+      return `/records${serializeRecordQuery({
+        streamer: this.currentStreamer.name,
+        query: this.channelFilters.query,
+        from: this.channelFilters.from,
+        to: this.channelFilters.to,
+        sort: this.channelFilters.sort,
+      })}`;
+    },
+
     get latestRecords() {
       return this.records.slice(0, 8);
     },
@@ -860,8 +1036,49 @@ function registerApp(Alpine) {
     },
 
     get channelRecords() {
+      return this.filteredChannelRecords.slice(0, this.channelVisibleCount);
+    },
+
+    get filteredChannelRecords() {
       if (!this.currentStreamer) return [];
-      return this.records.filter((record) => record.streamer === this.currentStreamer.name).slice(0, PAGE_SIZE);
+      return filterRecords(this.records, {
+        streamer: this.currentStreamer.name,
+        query: this.channelFilters.query,
+        from: this.channelFilters.from,
+        to: this.channelFilters.to,
+        sort: this.channelFilters.sort,
+      });
+    },
+
+    get channelRangeInvalid() {
+      return isDateRangeInverted(this.channelFilters);
+    },
+
+    get recordRangeInvalid() {
+      return isDateRangeInverted(this.recordFilters);
+    },
+
+    get channelFiltersActive() {
+      return Boolean(
+        this.channelFilters.query
+        || this.channelFilters.from
+        || this.channelFilters.to
+        || this.channelFilters.sort === 'oldest'
+      );
+    },
+
+    get recordFiltersActive() {
+      return Boolean(
+        this.recordFilters.query
+        || this.recordFilters.streamer
+        || this.recordFilters.from
+        || this.recordFilters.to
+        || this.recordFilters.sort === 'oldest'
+      );
+    },
+
+    get hasMoreChannelRecords() {
+      return this.channelVisibleCount < this.filteredChannelRecords.length;
     },
 
     get filteredRecords() {

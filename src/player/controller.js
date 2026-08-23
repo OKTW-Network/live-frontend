@@ -939,7 +939,7 @@ export function createPlayerController({
     try { url = new URL(locationImpl.href); } catch { url = new URL('http://localhost/'); }
     url.searchParams.delete('t');
     if (state.mode === 'record' && includeTime) url.searchParams.set('t', String(Math.floor(finiteOr(currentVideo.currentTime))));
-    const data = { title: documentImpl?.title || 'OKTW Live', url: url.href };
+    const data = { title: documentImpl?.title || 'ON LIVE', url: url.href };
     pushDebug('player', 'info', 'SHARE_ATTEMPT', { includeTime, url: data.url });
     if (navigatorImpl.share) {
       try {
