@@ -1,12 +1,11 @@
 const MAX_MESSAGES = 200;
 
 export function chatServerUrl({
-  useProxy = import.meta.env?.DEV === true,
   locationImpl = globalThis.location,
 } = {}) {
-  if (!useProxy || !locationImpl) return 'wss://live.oktw.one/ws';
+  if (!locationImpl) return 'ws://localhost/ws';
   const protocol = locationImpl.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${locationImpl.host}/__upstream/ws`;
+  return `${protocol}//${locationImpl.host}/ws`;
 }
 
 export class ChatClient {

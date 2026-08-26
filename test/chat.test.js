@@ -34,9 +34,11 @@ class FakeSocket extends EventTarget {
 
 test('chat joins with nickname, caps messages, and reconnects after unexpected close', () => {
   assert.equal(chatServerUrl({
-    useProxy: true,
     locationImpl: { protocol: 'http:', host: 'localhost:5173' },
-  }), 'ws://localhost:5173/__upstream/ws');
+  }), 'ws://localhost:5173/ws');
+  assert.equal(chatServerUrl({
+    locationImpl: { protocol: 'https:', host: 'live.example' },
+  }), 'wss://live.example/ws');
 
   FakeSocket.instances = [];
   const timers = [];

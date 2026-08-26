@@ -727,29 +727,26 @@ test('HLS buffer append resumes a live stream waiting for new content', async ()
   await harness.controller.destroy();
 });
 
-test('an obsolete native CORS probe cannot mutate the replacement source', async () => {
-  const probes = [];
-  const response = (ok) => ({ ok, body: { cancel: () => Promise.resolve() } });
+test('same-origin native live skips CORS fetch and leaves crossOrigin unset', async () => {
+  let fetchCalls = 0;
   const harness = createHarness({
     nativeHls: true,
     hlsSupported: false,
-    fetchResult: () => new Promise((resolve) => probes.push(resolve)),
+    fetchResult: () => {
+      fetchCalls += 1;
+      return { ok: true, body: { cancel: () => Promise.resolve() } };
+    },
   });
 
-  const first = harness.controller.loadLive('first');
-  await flush();
-  const second = harness.controller.loadLive('second');
-  await flush();
-  probes[1](response(true));
-  assert.equal(await second, 'native');
-  const activeVideo = harness.container.video;
-  assert.equal(activeVideo.crossOrigin, 'anonymous');
+  assert.equal(await harness.controller.loadLive('first'), 'native');
+  assert.equal(harness.container.video.crossOrigin, null);
+  assert.equal(harness.snapshot.boostAvailable, true);
+  assert.equal(fetchCalls, 0);
 
-  probes[0](response(false));
-  assert.equal(await first, 'cancelled');
-  assert.equal(harness.container.video, activeVideo);
-  assert.equal(activeVideo.crossOrigin, 'anonymous');
+  assert.equal(await harness.controller.loadLive('second'), 'native');
   assert.equal(harness.snapshot.source, 'second');
+  assert.equal(harness.container.video.crossOrigin, null);
+  assert.equal(fetchCalls, 0);
   await harness.controller.destroy();
 });
 
@@ -784,7 +781,7 @@ test('following survives pause/resume and foreground recovery while excessive la
   await harness.controller.destroy();
 });
 
-test('cross-origin unsafe source disables boost and replaces a Web-Audio-routed video', async () => {
+test('same-origin record keeps boost available after Web Audio was used on live', async () => {
   const harness = createHarness({ fetchResult: new TypeError('CORS blocked') });
   await harness.controller.loadLive('panda');
   FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
@@ -792,9 +789,10 @@ test('cross-origin unsafe source disables boost and replaces a Web-Audio-routed 
   await harness.controller.setMuted(false);
   const original = harness.video;
   await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
-  assert.notEqual(harness.container.video, original);
-  assert.equal(harness.snapshot.boostAvailable, false);
-  assert.match(harness.snapshot.boostUnavailableReason, /CORS/);
+  assert.equal(harness.container.video, original);
+  assert.equal(harness.snapshot.boostAvailable, true);
+  assert.equal(harness.snapshot.boostUnavailableReason, '');
+  assert.equal(harness.video.src, '/record/panda-1700000000.mp4');
   await harness.controller.destroy();
 });
 

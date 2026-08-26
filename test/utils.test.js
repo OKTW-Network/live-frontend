@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  API_BASE,
   deriveStreamers,
   filterRecords,
   isDateRangeInverted,
@@ -9,6 +8,7 @@ import {
   normalizeRecords,
   parseRoute,
   probeLive,
+  recordPath,
   recordUrl,
   serializeRecordQuery,
   parseRecordQuery,
@@ -40,8 +40,10 @@ test('parses supported routes and serializes record filters without legacy page 
   assert.deepEqual(parseRoute('/'), { view: 'home' });
   assert.deepEqual(parseRoute('/records'), { view: 'records' });
   assert.deepEqual(parseRoute('/@name%20with%20space'), { view: 'channel', streamer: 'name with space' });
-  assert.deepEqual(parseRoute('/record/cute_panda-1700000000.mp4'), { view: 'record', filename: 'cute_panda-1700000000.mp4' });
+  assert.deepEqual(parseRoute('/watch/cute_panda-1700000000.mp4'), { view: 'record', filename: 'cute_panda-1700000000.mp4' });
+  assert.deepEqual(parseRoute('/record/cute_panda-1700000000.mp4'), { view: 'notFound' });
   assert.deepEqual(parseRoute('/live/cute_panda'), { view: 'notFound' });
+  assert.equal(recordPath('cute_panda-1700000000.mp4'), '/watch/cute_panda-1700000000.mp4');
 
   assert.deepEqual(parseRecordQuery('?q=panda&streamer=cute_panda&sort=oldest&page=8'), {
     query: 'panda',
@@ -90,12 +92,12 @@ test('treats failed or invalid live probes as offline', async (t) => {
 });
 
 test('recordUrl maps .flv filenames to .mp4 and leaves other extensions unchanged', () => {
-  assert.equal(recordUrl('streamer-123.flv'), `${API_BASE}/record/streamer-123.mp4`);
-  assert.equal(recordUrl('streamer-123.FLV'), `${API_BASE}/record/streamer-123.mp4`);
-  assert.equal(recordUrl('streamer-123.mp4'), `${API_BASE}/record/streamer-123.mp4`);
+  assert.equal(recordUrl('streamer-123.flv'), '/record/streamer-123.mp4');
+  assert.equal(recordUrl('streamer-123.FLV'), '/record/streamer-123.mp4');
+  assert.equal(recordUrl('streamer-123.mp4'), '/record/streamer-123.mp4');
 });
 
 test('builds a cache-busted live thumbnail URL independently from record thumbnails', () => {
-  assert.equal(liveThumbnailUrl('cute panda'), `${API_BASE}/live/cute%20panda.png`);
-  assert.equal(liveThumbnailUrl('cute panda', 123), `${API_BASE}/live/cute%20panda.png?v=123`);
+  assert.equal(liveThumbnailUrl('cute panda'), '/live/cute%20panda.png');
+  assert.equal(liveThumbnailUrl('cute panda', 123), '/live/cute%20panda.png?v=123');
 });

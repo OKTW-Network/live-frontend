@@ -1,7 +1,4 @@
-const useDevelopmentProxy = import.meta.env?.DEV === true;
-
-export const API_BASE = useDevelopmentProxy ? '/__upstream' : 'https://live.oktw.one';
-export const RECORD_LIST_URL = `${API_BASE}/record/list.json`;
+export const RECORD_LIST_URL = '/record/list.json';
 export const PAGE_SIZE = 24;
 
 const filenamePattern = /^(.*)-(\d+)\.([^.]+)$/;
@@ -189,7 +186,7 @@ export function streamerPath(streamer) {
 }
 
 export function recordPath(filename) {
-  return `/record/${encodeURIComponent(filename)}`;
+  return `/watch/${encodeURIComponent(filename)}`;
 }
 
 export function parseRoute(pathname = '/') {
@@ -202,7 +199,7 @@ export function parseRoute(pathname = '/') {
     if (streamer) return { view: 'channel', streamer };
   }
 
-  const recordMatch = pathname.match(/^\/record\/([^/]+)$/);
+  const recordMatch = pathname.match(/^\/watch\/([^/]+)$/);
   if (recordMatch) {
     const filename = decodePathSegment(recordMatch[1]);
     if (filename) return { view: 'record', filename };
@@ -212,22 +209,22 @@ export function parseRoute(pathname = '/') {
 }
 
 export function liveUrl(streamer) {
-  return `${API_BASE}/live/${encodeURIComponent(streamer)}.m3u8`;
+  return `/live/${encodeURIComponent(streamer)}.m3u8`;
 }
 
 export function liveThumbnailUrl(streamer, version = '') {
-  const url = `${API_BASE}/live/${encodeURIComponent(streamer)}.png`;
+  const url = `/live/${encodeURIComponent(streamer)}.png`;
   return version === '' ? url : `${url}?v=${encodeURIComponent(version)}`;
 }
 
 export function recordUrl(filename) {
   const playable = String(filename).replace(/\.flv$/i, '.mp4');
-  return `${API_BASE}/record/${encodeURIComponent(playable)}`;
+  return `/record/${encodeURIComponent(playable)}`;
 }
 
 export function thumbnailUrl(filename, extension = 'jxl') {
   const basename = String(filename).replace(/\.[^.]+$/, '');
-  return `${API_BASE}/record/${encodeURIComponent(basename)}.${extension}`;
+  return `/record/${encodeURIComponent(basename)}.${extension}`;
 }
 
 export function nextThumbnailExtension(extension) {
