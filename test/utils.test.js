@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  API_BASE,
   deriveStreamers,
   filterRecords,
   isDateRangeInverted,
@@ -8,6 +9,7 @@ import {
   normalizeRecords,
   parseRoute,
   probeLive,
+  recordUrl,
   serializeRecordQuery,
   parseRecordQuery,
 } from '../src/utils.js';
@@ -73,13 +75,27 @@ test('filters inclusive Asia/Taipei calendar days and serializes date ranges', (
   );
 });
 
-test('treats failed or invalid live probes as offline', async () => {
-  assert.equal(await probeLive('test', { fetchImpl: async () => { throw new Error('offline'); }, timeoutMs: 10 }), false);
-  assert.equal(await probeLive('test', { fetchImpl: async () => ({ ok: true, text: async () => '#EXTM3U\n' }), timeoutMs: 10 }), true);
-  assert.equal(await probeLive('test', { fetchImpl: async () => ({ ok: true, text: async () => 'not hls' }), timeoutMs: 10 }), false);
+test('treats failed or invalid live probes as offline', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  globalThis.fetch = async () => { throw new Error('offline'); };
+  assert.equal(await probeLive('test', { timeoutMs: 10 }), false);
+
+  globalThis.fetch = async () => ({ ok: true, text: async () => '#EXTM3U\n' });
+  assert.equal(await probeLive('test', { timeoutMs: 10 }), true);
+
+  globalThis.fetch = async () => ({ ok: true, text: async () => 'not hls' });
+  assert.equal(await probeLive('test', { timeoutMs: 10 }), false);
+});
+
+test('recordUrl maps .flv filenames to .mp4 and leaves other extensions unchanged', () => {
+  assert.equal(recordUrl('streamer-123.flv'), `${API_BASE}/record/streamer-123.mp4`);
+  assert.equal(recordUrl('streamer-123.FLV'), `${API_BASE}/record/streamer-123.mp4`);
+  assert.equal(recordUrl('streamer-123.mp4'), `${API_BASE}/record/streamer-123.mp4`);
 });
 
 test('builds a cache-busted live thumbnail URL independently from record thumbnails', () => {
-  assert.equal(liveThumbnailUrl('cute panda'), 'https://live.oktw.one/live/cute%20panda.png');
-  assert.equal(liveThumbnailUrl('cute panda', 123), 'https://live.oktw.one/live/cute%20panda.png?v=123');
+  assert.equal(liveThumbnailUrl('cute panda'), `${API_BASE}/live/cute%20panda.png`);
+  assert.equal(liveThumbnailUrl('cute panda', 123), `${API_BASE}/live/cute%20panda.png?v=123`);
 });

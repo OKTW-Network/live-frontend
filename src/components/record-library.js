@@ -123,16 +123,9 @@ export function createRecordLibraryComponent(Alpine) {
       return this.view === 'channel' ? this.filteredChannelRecords : this.filteredRecords;
     },
 
-    get activeVisibleRecords() {
-      return this.activeFilteredRecords.slice(0, this.activeRecordList.visibleCount);
-    },
-
     get recordGridRecords() {
-      return this.view === 'home' ? this.latestRecords : this.activeVisibleRecords;
-    },
-
-    get recordGridShowStreamer() {
-      return this.view !== 'channel';
+      if (this.view === 'home') return this.latestRecords;
+      return this.activeFilteredRecords.slice(0, this.activeRecordList.visibleCount);
     },
   };
 }

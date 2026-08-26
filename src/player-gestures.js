@@ -29,41 +29,6 @@ export function isPlayerGestureBlockedTarget(target) {
   return Boolean(target?.closest?.(BLOCKED_TARGET_SELECTOR));
 }
 
-export function createPlaybackToggleCoordinator({
-  getPlayer = () => null,
-  getSnapshot = () => ({ paused: true }),
-  getMediaKey = () => '',
-  onFeedback = () => {},
-} = {}) {
-  let run = 0;
-
-  async function toggle({ showFeedback = false, forcePlay = false } = {}) {
-    const player = getPlayer();
-    const mediaKey = getMediaKey();
-    if (!player || !mediaKey) return false;
-    const currentRun = ++run;
-    const shouldPlay = forcePlay || getSnapshot().paused;
-
-    if (shouldPlay) {
-      const played = await player.play();
-      if (currentRun !== run || mediaKey !== getMediaKey() || played !== true || getSnapshot().paused) return false;
-      if (showFeedback) onFeedback('play');
-      return true;
-    }
-
-    player.pause();
-    if (currentRun !== run || mediaKey !== getMediaKey() || !getSnapshot().paused) return false;
-    if (showFeedback) onFeedback('pause');
-    return true;
-  }
-
-  function cancel() {
-    run += 1;
-  }
-
-  return Object.freeze({ toggle, cancel });
-}
-
 export function createPlayerGestureRecognizer({
   onMouseSingle = () => {},
   onMouseDouble = () => {},

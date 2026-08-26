@@ -58,10 +58,6 @@ export function deriveStreamers(records) {
   );
 }
 
-export function selectLiveStreamers(streamers, statuses = {}) {
-  return streamers.filter((streamer) => statuses[streamer.name] === 'online');
-}
-
 export function orderStreamersByStatus(streamers, statuses = {}) {
   return [...streamers].sort((a, b) => {
     const liveDifference = Number(statuses[b.name] === 'online') - Number(statuses[a.name] === 'online');
@@ -225,7 +221,8 @@ export function liveThumbnailUrl(streamer, version = '') {
 }
 
 export function recordUrl(filename) {
-  return `${API_BASE}/record/${encodeURIComponent(filename)}`;
+  const playable = String(filename).replace(/\.flv$/i, '.mp4');
+  return `${API_BASE}/record/${encodeURIComponent(playable)}`;
 }
 
 export function thumbnailUrl(filename, extension = 'jxl') {
@@ -237,20 +234,16 @@ export function nextThumbnailExtension(extension) {
   return { jxl: 'avif', avif: 'png', png: null }[extension] ?? null;
 }
 
-export async function probeLive(streamer, { fetchImpl = fetch, timeoutMs = 5000 } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+export async function probeLive(streamer, { timeoutMs = 5000 } = {}) {
   try {
-    const response = await fetchImpl(liveUrl(streamer), {
+    const response = await fetch(liveUrl(streamer), {
       cache: 'no-store',
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return false;
     return (await response.text()).trimStart().startsWith('#EXTM3U');
   } catch {
     return false;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

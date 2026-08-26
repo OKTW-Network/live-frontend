@@ -12,17 +12,16 @@ export function resolveTheme(preference, prefersDark = false) {
 }
 
 export function applyThemePreference(preference, {
-  documentImpl = globalThis.document,
   prefersDark = globalThis.matchMedia?.('(prefers-color-scheme: dark)')?.matches === true,
 } = {}) {
   const normalized = normalizeThemePreference(preference);
   const resolved = resolveTheme(normalized, prefersDark);
-  const root = documentImpl?.documentElement;
+  const root = globalThis.document?.documentElement;
   if (root) {
     root.dataset.theme = resolved;
     root.style.colorScheme = resolved;
   }
-  documentImpl?.querySelector?.('meta[name="theme-color"]')
+  globalThis.document?.querySelector?.('meta[name="theme-color"]')
     ?.setAttribute('content', resolved === 'dark' ? '#0e0e10' : '#f7f7f8');
   return { preference: normalized, resolved };
 }

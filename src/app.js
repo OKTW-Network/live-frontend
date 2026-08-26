@@ -16,7 +16,6 @@ import {
   probeLive,
   recordPath,
   recordUrl,
-  selectLiveStreamers,
   streamerPath,
   thumbnailUrl,
 } from './utils.js';
@@ -47,6 +46,17 @@ function applyMetadata(pathname) {
 function historyIndexForState(state) {
   const value = state?.onLiveIndex;
   return Number.isInteger(value) ? value : 0;
+}
+
+function elementForHash(hash) {
+  if (!hash || hash === '#') return null;
+  const id = hash.startsWith('#') ? hash.slice(1) : hash;
+  if (!id) return null;
+  try {
+    return document.getElementById(decodeURIComponent(id));
+  } catch {
+    return null;
+  }
 }
 
 function storedThemePreference() {
@@ -88,8 +98,7 @@ export function registerApp(Alpine) {
       this.themeMediaHandler = () => {
         if (this.themePreference === 'system') this.syncTheme();
       };
-      if (this.themeMedia.addEventListener) this.themeMedia.addEventListener('change', this.themeMediaHandler);
-      else this.themeMedia.addListener?.(this.themeMediaHandler);
+      this.themeMedia.addEventListener('change', this.themeMediaHandler);
       this.syncTheme();
 
       this.initPlayer();
@@ -170,7 +179,7 @@ export function registerApp(Alpine) {
       if (sameDocument && url.hash) {
         event.preventDefault();
         history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
-        document.querySelector(url.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        elementForHash(url.hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
       if (sameDocument && !url.hash) {
@@ -298,12 +307,10 @@ export function registerApp(Alpine) {
     restorePosition(run, { top = 0, hash = '' } = {}) {
       Alpine.nextTick(() => requestAnimationFrame(() => {
         if (run !== this.routeRun) return;
-        if (hash) {
-          const target = document.querySelector(hash);
-          if (target) {
-            target.scrollIntoView({ behavior: 'instant', block: 'start' });
-            return;
-          }
+        const target = elementForHash(hash);
+        if (target) {
+          target.scrollIntoView({ behavior: 'instant', block: 'start' });
+          return;
         }
         window.scrollTo({ top, behavior: 'instant' });
       }));
@@ -358,8 +365,9 @@ export function registerApp(Alpine) {
       if (this.liveStatuses[name] !== nextStatus) {
         this.liveStatuses = { ...this.liveStatuses, [name]: nextStatus };
       }
-      if (online && this.activeMediaKey === `live:${name}` && this.playerSnapshot.playerState === 'offline') {
-        await this.player.retry();
+      if (online && this.activeMediaKey === `live:${name}`) {
+        const playerState = this.playerSnapshot.playerState;
+        if (playerState === 'offline' || playerState === 'error') await this.player.retry();
       } else if (online) await this.activateMedia('live', name, name, this.routeRun);
       else if (this.activeMediaKey === `live:${name}`) this.deactivateMedia();
       if (run === this.probeRun && this.view === 'channel' && this.currentStreamer?.name === name) {
@@ -395,8 +403,7 @@ export function registerApp(Alpine) {
       this.stopProbes();
       this.deactivateMedia();
       this.destroyRecordLibrary();
-      if (this.themeMedia?.removeEventListener) this.themeMedia.removeEventListener('change', this.themeMediaHandler);
-      else this.themeMedia?.removeListener?.(this.themeMediaHandler);
+      this.themeMedia?.removeEventListener('change', this.themeMediaHandler);
       this.themeMedia = null;
       this.themeMediaHandler = null;
       this.destroyPlayer();
@@ -436,7 +443,7 @@ export function registerApp(Alpine) {
     },
 
     get liveStreamers() {
-      return selectLiveStreamers(this.streamers, this.liveStatuses);
+      return this.streamers.filter((streamer) => this.liveStatuses[streamer.name] === 'online');
     },
 
     get homeStreamers() {

@@ -1053,9 +1053,14 @@ export function createPlayerController({
     applyVolume();
     if (preferredVolume === 0) {
       setVideoMuted(true, 'volume-zero');
-      const activation = userActivatedPlay({ unmute: false, reason: 'volume-change' });
       emitSnapshot();
-      return activation;
+      return Promise.resolve(true);
+    }
+    // Keep a user pause; only unlock/resume playback when the user is already playing.
+    if (state.userPaused) {
+      if (state.muteReason === 'volume-zero') setVideoMuted(false, 'none');
+      emitSnapshot();
+      return Promise.resolve(true);
     }
     const activation = userActivatedPlay({ unmute: true, reason: 'volume-change' });
     emitSnapshot();

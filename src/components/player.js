@@ -1,6 +1,5 @@
 import {
   PLAYER_GESTURE_CONFIG,
-  createPlaybackToggleCoordinator,
   createPlayerGestureRecognizer,
   isPlayerGestureBlockedTarget,
 } from '../player-gestures.js';
@@ -17,7 +16,7 @@ export function createPlayerComponent(Alpine) {
     playerControlsVisible: true,
     playerGestureFeedback: null,
     playerGestureFeedbackTimer: null,
-    playerPlaybackCoordinator: null,
+    playerPlaybackToggleRun: 0,
     playerHelpOpen: false,
     settingsOpen: false,
     shareOpen: false,
@@ -42,16 +41,6 @@ export function createPlayerComponent(Alpine) {
           this.debugCount = count;
           if (this.debugOpen) this.refreshDebug();
         },
-      });
-      this.playerPlaybackCoordinator = createPlaybackToggleCoordinator({
-        getPlayer: () => this.player,
-        getSnapshot: () => this.playerSnapshot,
-        getMediaKey: () => this.activeMediaKey,
-        onFeedback: (action) => this.showPlayerGestureFeedback({
-          type: 'playback',
-          action,
-          label: action === 'play' ? '開始播放' : '已暫停',
-        }),
       });
       this.playerGestures = createPlayerGestureRecognizer({
         onMouseSingle: () => {
@@ -103,7 +92,7 @@ export function createPlayerComponent(Alpine) {
     resetPlayer() {
       if (this.activeMediaKey || this.playerSnapshot.playerState !== 'idle') this.player?.cleanup();
       Alpine.raw(this.playerGestures)?.reset();
-      Alpine.raw(this.playerPlaybackCoordinator)?.cancel();
+      this.playerPlaybackToggleRun += 1;
       this.clearPlayerGestureFeedback();
       this.closePlayerHelp(false);
       this.settingsOpen = false;
@@ -119,16 +108,44 @@ export function createPlayerComponent(Alpine) {
       this.playerShellHeight = 0;
       Alpine.raw(this.playerGestures)?.destroy();
       this.playerGestures = null;
-      Alpine.raw(this.playerPlaybackCoordinator)?.cancel();
-      this.playerPlaybackCoordinator = null;
+      this.playerPlaybackToggleRun += 1;
       this.clearPlayerGestureFeedback();
       this.player?.destroy();
     },
 
     async retryPlayer() { await this.player?.retry(); },
 
-    togglePlayback({ showFeedback = false, forcePlay = false } = {}) {
-      return Alpine.raw(this.playerPlaybackCoordinator)?.toggle({ showFeedback, forcePlay }) ?? false;
+    async togglePlayback({ showFeedback = false, forcePlay = false } = {}) {
+      const player = this.player;
+      const mediaKey = this.activeMediaKey;
+      if (!player || !mediaKey) return false;
+      const currentRun = ++this.playerPlaybackToggleRun;
+      const shouldPlay = forcePlay || this.playerSnapshot.paused;
+
+      if (shouldPlay) {
+        const played = await player.play();
+        if (
+          currentRun !== this.playerPlaybackToggleRun
+          || mediaKey !== this.activeMediaKey
+          || played !== true
+          || this.playerSnapshot.paused
+        ) return false;
+        if (showFeedback) {
+          this.showPlayerGestureFeedback({ type: 'playback', action: 'play', label: '開始播放' });
+        }
+        return true;
+      }
+
+      player.pause();
+      if (
+        currentRun !== this.playerPlaybackToggleRun
+        || mediaKey !== this.activeMediaKey
+        || !this.playerSnapshot.paused
+      ) return false;
+      if (showFeedback) {
+        this.showPlayerGestureFeedback({ type: 'playback', action: 'pause', label: '已暫停' });
+      }
+      return true;
     },
 
     toggleMute() { this.player?.setMuted(!this.playerSnapshot.muted); },

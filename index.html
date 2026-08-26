@@ -380,7 +380,7 @@
               <template x-for="record in recordGridRecords" :key="record.filename">
                 <a :href="recordPath(record.filename)" class="media-card group block min-w-0">
                   <div x-data="{ thumbExt: 'jxl', thumbFailed: false }" class="media-card-media relative aspect-video overflow-hidden bg-[var(--soft)]"><div x-show="thumbFailed" class="absolute inset-0 grid place-items-center text-3xl font-black text-[var(--muted)]" x-text="streamerInitial(record.streamer)"></div><img x-show="!thumbFailed" :src="thumbnailUrl(record.filename, thumbExt)" @error="const next = nextThumbnailExtension(thumbExt); if (next) thumbExt = next; else thumbFailed = true" alt="" loading="lazy" class="absolute inset-0 size-full object-cover transition duration-300 group-hover:scale-[1.025]" /><span class="absolute bottom-3 right-3 rounded bg-black/80 px-2 py-1 text-[11px] font-black text-white" x-text="formatDuration(record.duration)"></span></div>
-                  <div class="media-card-body"><h3 class="truncate text-sm font-black group-hover:underline" x-text="recordGridShowStreamer ? record.streamer : formatDate(record.timestamp)"></h3><p class="mt-1 text-xs text-[var(--muted)]" x-text="recordGridShowStreamer ? `${formatDate(record.timestamp)} · ${formatBytes(record.size)}` : formatBytes(record.size)"></p></div>
+                  <div class="media-card-body"><h3 class="truncate text-sm font-black group-hover:underline" x-text="record.streamer"></h3><p class="mt-1 text-xs text-[var(--muted)]" x-text="`${formatDate(record.timestamp)} · ${formatBytes(record.size)}`"></p></div>
                 </a>
               </template>
             </div>

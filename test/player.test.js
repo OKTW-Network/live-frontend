@@ -372,6 +372,41 @@ test('volume zero mutes, unmute restores audible volume, and boost clamps above 
   await harness.controller.destroy();
 });
 
+test('setVolume while user-paused does not resume playback', async () => {
+  const harness = createHarness();
+  await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });
+  await harness.controller.play();
+  assert.equal(harness.snapshot.userPaused, false);
+  assert.equal(harness.video.paused, false);
+
+  harness.controller.pause();
+  assert.equal(harness.snapshot.userPaused, true);
+  assert.equal(harness.video.paused, true);
+  const playCallsBefore = harness.video.playCalls;
+
+  await harness.controller.setVolume(50);
+  assert.equal(harness.snapshot.userPaused, true);
+  assert.equal(harness.video.paused, true);
+  assert.equal(harness.snapshot.volumePercent, 50);
+  assert.equal(harness.video.playCalls, playCallsBefore);
+
+  await harness.controller.setVolume(0);
+  assert.equal(harness.snapshot.userPaused, true);
+  assert.equal(harness.video.paused, true);
+  assert.equal(harness.snapshot.muted, true);
+  assert.equal(harness.snapshot.muteReason, 'volume-zero');
+  assert.equal(harness.video.playCalls, playCallsBefore);
+
+  await harness.controller.setVolume(40);
+  assert.equal(harness.snapshot.userPaused, true);
+  assert.equal(harness.video.paused, true);
+  assert.equal(harness.snapshot.muted, false);
+  assert.equal(harness.snapshot.volumePercent, 40);
+  assert.equal(harness.video.playCalls, playCallsBefore);
+
+  await harness.controller.destroy();
+});
+
 test('unsupported playback rate restores the previous selected and effective rate', async () => {
   const harness = createHarness();
   await harness.controller.loadRecord({ filename: 'panda-1700000000.mp4' });

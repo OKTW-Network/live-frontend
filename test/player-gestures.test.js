@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createPlaybackToggleCoordinator,
   createPlayerGestureRecognizer,
   isPlayerGestureBlockedTarget,
 } from '../src/player-gestures.js';
@@ -95,47 +94,6 @@ test('touch same-side doubles report zone while cross-side taps stay independent
   harness.clock.tick(300);
   assert.equal(harness.calls.touchSingle.length, 2);
   assert.equal(harness.calls.touchDouble.length, 1);
-});
-
-test('playback toggle reports feedback only on success and suppresses cancel or media change', async () => {
-  const snapshot = { paused: true };
-  const feedback = [];
-  let mediaKey = 'record:one';
-  let resolvePlay;
-  const player = {
-    play: () => new Promise((resolve) => { resolvePlay = resolve; }),
-    pause() { snapshot.paused = true; },
-  };
-  const coordinator = createPlaybackToggleCoordinator({
-    getPlayer: () => player,
-    getSnapshot: () => snapshot,
-    getMediaKey: () => mediaKey,
-    onFeedback: (action) => feedback.push(action),
-  });
-
-  const pending = coordinator.toggle({ showFeedback: true });
-  snapshot.paused = false;
-  resolvePlay(true);
-  assert.equal(await pending, true);
-  assert.deepEqual(feedback, ['play']);
-
-  assert.equal(await coordinator.toggle({ showFeedback: true }), true);
-  assert.deepEqual(feedback, ['play', 'pause']);
-
-  snapshot.paused = true;
-  const cancelled = coordinator.toggle({ showFeedback: true });
-  coordinator.cancel();
-  snapshot.paused = false;
-  resolvePlay(true);
-  assert.equal(await cancelled, false);
-
-  snapshot.paused = true;
-  const changed = coordinator.toggle({ showFeedback: true });
-  mediaKey = 'record:two';
-  snapshot.paused = false;
-  resolvePlay(true);
-  assert.equal(await changed, false);
-  assert.deepEqual(feedback, ['play', 'pause']);
 });
 
 test('recognizes player controls as blocked gesture targets', () => {

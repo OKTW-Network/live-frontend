@@ -44,3 +44,40 @@ test('live buffering is exposed as loading instead of a paused control', () => {
   waiting.playerSnapshot.userPaused = true;
   assert.equal(waiting.playerIsLoading(), false);
 });
+
+test('playback toggle reports feedback only on success and suppresses cancel or media change', async () => {
+  const feedback = [];
+  let resolvePlay;
+  const component = componentWith({ paused: true });
+  component.activeMediaKey = 'record:one';
+  component.playerPlaybackToggleRun = 0;
+  component.player = {
+    play: () => new Promise((resolve) => { resolvePlay = resolve; }),
+    pause() { component.playerSnapshot.paused = true; },
+  };
+  component.showPlayerGestureFeedback = ({ action }) => feedback.push(action);
+
+  const pending = component.togglePlayback({ showFeedback: true });
+  component.playerSnapshot.paused = false;
+  resolvePlay(true);
+  assert.equal(await pending, true);
+  assert.deepEqual(feedback, ['play']);
+
+  assert.equal(await component.togglePlayback({ showFeedback: true }), true);
+  assert.deepEqual(feedback, ['play', 'pause']);
+
+  component.playerSnapshot.paused = true;
+  const cancelled = component.togglePlayback({ showFeedback: true });
+  component.playerPlaybackToggleRun += 1;
+  component.playerSnapshot.paused = false;
+  resolvePlay(true);
+  assert.equal(await cancelled, false);
+
+  component.playerSnapshot.paused = true;
+  const changed = component.togglePlayback({ showFeedback: true });
+  component.activeMediaKey = 'record:two';
+  component.playerSnapshot.paused = false;
+  resolvePlay(true);
+  assert.equal(await changed, false);
+  assert.deepEqual(feedback, ['play', 'pause']);
+});

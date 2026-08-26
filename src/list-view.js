@@ -18,7 +18,13 @@ function defaultFilters(includeStreamer) {
 function normalizeFilters(value, includeStreamer) {
   const filters = typeof value === 'string' || value instanceof URLSearchParams
     ? parseRecordQuery(value)
-    : parseRecordQuery(serializeRecordQuery(value));
+    : parseRecordQuery(new URLSearchParams([
+      ['q', value?.query || ''],
+      ['streamer', value?.streamer || ''],
+      ['from', value?.from || ''],
+      ['to', value?.to || ''],
+      ['sort', value?.sort || ''],
+    ]));
   if (!includeStreamer) delete filters.streamer;
   return filters;
 }
