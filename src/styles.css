@@ -146,8 +146,7 @@ a, button, input, select { outline-offset: 4px; }
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
 }
 
-.filter-band,
-.channel-status-band {
+.filter-band {
   margin-inline: -1rem;
   border-block: 1px solid var(--line);
   padding-inline: 1rem;
@@ -155,16 +154,13 @@ a, button, input, select { outline-offset: 4px; }
 }
 
 .filter-band { padding-block: 1.25rem; }
-.channel-status-band { padding-block: 2.5rem; }
 
 @media (min-width: 40rem) {
-  .filter-band,
-  .channel-status-band { margin-inline: -1.5rem; padding-inline: 1.5rem; }
+  .filter-band { margin-inline: -1.5rem; padding-inline: 1.5rem; }
 }
 
 @media (min-width: 64rem) {
-  .filter-band,
-  .channel-status-band { margin-inline: -2rem; padding-inline: 2rem; }
+  .filter-band { margin-inline: -2rem; padding-inline: 2rem; }
 }
 
 .filter-input {

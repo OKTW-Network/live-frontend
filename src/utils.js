@@ -219,6 +219,11 @@ export function liveUrl(streamer) {
   return `${API_BASE}/live/${encodeURIComponent(streamer)}.m3u8`;
 }
 
+export function liveThumbnailUrl(streamer, version = '') {
+  const url = `${API_BASE}/live/${encodeURIComponent(streamer)}.png`;
+  return version === '' ? url : `${url}?v=${encodeURIComponent(version)}`;
+}
+
 export function recordUrl(filename) {
   return `${API_BASE}/record/${encodeURIComponent(filename)}`;
 }

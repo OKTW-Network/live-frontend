@@ -2,11 +2,11 @@ export const STORAGE_KEYS = Object.freeze({
   volume: 'onlive.player.volumePercent',
   boost: 'onlive.player.boostEnabled',
   rate: 'onlive.player.selectedRate',
-  autoCatchUp: 'onlive.player.autoCatchUp',
+  lowLatency: 'onlive.player.lowLatency',
 });
 
 export const MEDIA_EVENTS = Object.freeze([
-  'loadedmetadata', 'playing', 'pause', 'waiting', 'stalled', 'canplay', 'ended', 'error',
+  'loadedmetadata', 'playing', 'pause', 'waiting', 'stalled', 'canplay', 'progress', 'durationchange', 'ended', 'error',
   'ratechange', 'seeked', 'volumechange', 'enterpictureinpicture', 'leavepictureinpicture',
 ]);
 
@@ -56,13 +56,16 @@ export function forwardBufferFor(ranges, currentTime) {
 
 export function defaultMessage(state) {
   if (state.notice) return state.notice;
-  if (state.autoplayState === 'blocked') return '瀏覽器已阻擋自動播放，請按下播放。';
-  if (state.autoplayState === 'playing-muted') return '直播已靜音／開啟聲音';
-  return {
+  const statusMessage = {
     loading: '正在連線影音來源…',
+    waiting: state.mode === 'live' ? '正在等待直播內容…' : '正在載入影片內容…',
     ready: '已就緒，按下播放即可開始。',
     offline: '目前沒有直播，或串流無法取得。',
     unsupported: '這個瀏覽器不支援此影音格式。',
     error: state.mode === 'record' ? '瀏覽器無法播放這份直播紀錄。' : '影音播放發生錯誤。',
-  }[state.playerState] || '';
+  }[state.playerState];
+  if (['loading', 'waiting', 'offline', 'unsupported', 'error'].includes(state.playerState)) return statusMessage;
+  if (state.autoplayState === 'blocked') return '瀏覽器已阻擋自動播放，請按下播放。';
+  if (state.autoplayState === 'playing-muted') return '直播已靜音／開啟聲音';
+  return statusMessage || '';
 }

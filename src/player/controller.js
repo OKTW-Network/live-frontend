@@ -14,13 +14,35 @@ import {
 } from './shared.js';
 
 export const PLAYER_RATES = Object.freeze([0.25, 0.5, 0.75, 1, 2, 4, 8, 16]);
+export const LIVE_LATENCY_PROFILES = Object.freeze({
+  low: Object.freeze({
+    lowLatencyMode: true,
+    liveSyncDurationCount: 1,
+    liveMaxLatencyDurationCount: 3,
+    initialLiveManifestSize: 1,
+    maxLiveSyncPlaybackRate: 1.25,
+  }),
+  stable: Object.freeze({
+    lowLatencyMode: false,
+    liveSyncDurationCount: 3,
+    liveMaxLatencyDurationCount: 6,
+    initialLiveManifestSize: 3,
+    maxLiveSyncPlaybackRate: 1,
+  }),
+});
+
+const LIVE_POSITION_TOLERANCE = 1.5;
+const MIN_CATCH_UP_FORWARD_BUFFER = 2;
+const MIN_LIVE_POSITION_FORWARD_BUFFER = 0.25;
+const NATIVE_MAX_LATENCY_SECONDS = Object.freeze({ low: 12, stable: 30 });
 
 export const INITIAL_PLAYER_SNAPSHOT = {
   mode: null, engine: 'none', source: '', sourceUrl: '', playerState: 'idle',
   networkState: 0, readyState: 0, paused: true, playing: false, ended: false,
   userPaused: false, hasPlayed: false, currentTime: 0, duration: null,
   buffered: [], seekable: [], timelineStart: 0, timelineEnd: 0, canSeek: false,
-  selectedRate: 1, effectiveRate: 1, autoCatchUp: true, following: false,
+  livePosition: null, atLiveEdge: false, lowLatency: true,
+  selectedRate: 1, effectiveRate: 1, following: false,
   catchUpActive: false, catchUpReason: 'idle', latency: null, targetLatency: null, forwardBuffer: 0,
   volumePercent: 100, preferredVolumePercent: 100, muted: false, muteReason: 'none',
   boostEnabled: false, boostAvailable: false, boostUnavailableReason: '', gain: 1,
@@ -72,7 +94,6 @@ export function createPlayerController({
   let nativeCorsFallbackAttempted = false;
 
   let liveTimer = null;
-  let latencySamples = [];
 
   const state = {
     mode: null,
@@ -89,7 +110,7 @@ export function createPlayerController({
     boostAvailable: false,
     boostUnavailableReason: AudioContextImpl ? '尚未載入可用來源' : '瀏覽器不支援 Web Audio',
     selectedRate: PLAYER_RATES.includes(storedRate) ? storedRate : 1,
-    autoCatchUp: readPreference(storage, STORAGE_KEYS.autoCatchUp, 'true') !== 'false',
+    lowLatency: readPreference(storage, STORAGE_KEYS.lowLatency, 'true') !== 'false',
     following: false,
     targetLatency: null,
     latency: null,
@@ -224,9 +245,9 @@ export function createPlayerController({
     }
   }
 
-  async function configureNativeSource(url, generation, currentGeneration) {
+  async function configureNativeSource(url, generation) {
     const cors = await probeCors(url);
-    if (generation !== currentGeneration) return false;
+    if (generation !== sourceGeneration || destroyed) return false;
     const replaced = !cors.allowed && audioSourceVideo === currentVideo && replaceVideoForNativeAudio();
     if (replaced) bindMediaEvents();
     if (cors.crossOrigin) {
@@ -268,6 +289,7 @@ export function createPlayerController({
 
   function updateLiveMetrics() {
     const buffered = readRanges(currentVideo.buffered);
+    const seekable = readRanges(currentVideo.seekable);
     const currentTime = finiteOr(currentVideo.currentTime);
     state.forwardBuffer = forwardBufferFor(buffered, currentTime);
     if (state.mode !== 'live') {
@@ -280,13 +302,46 @@ export function createPlayerController({
       state.targetLatency = Number.isFinite(hls.targetLatency) ? hls.targetLatency : null;
       return;
     }
-    const liveEdge = latestRangeEnd(buffered);
+    if (state.engine !== 'native') {
+      state.latency = null;
+      state.targetLatency = null;
+      return;
+    }
+    const liveEdge = latestRangeEnd(seekable) ?? latestRangeEnd(buffered);
     state.latency = liveEdge === null ? null : Math.max(0, liveEdge - currentTime);
+    state.targetLatency = state.lowLatency ? 1 : null;
   }
 
-  function autoCatchUpEligible() {
-    return state.mode === 'live' && state.autoCatchUp && state.selectedRate === 1 && state.following
-      && currentVideo.paused === false && state.playerState !== 'waiting';
+  function latencyProfile() {
+    return state.lowLatency ? LIVE_LATENCY_PROFILES.low : LIVE_LATENCY_PROFILES.stable;
+  }
+
+  function livePositionFor(seekable = readRanges(currentVideo.seekable)) {
+    if (state.mode !== 'live') return null;
+    const hlsPosition = state.engine === 'hls' ? Number(hls?.liveSyncPosition) : Number.NaN;
+    const first = seekable[0]?.start;
+    const last = latestRangeEnd(seekable);
+    if (Number.isFinite(hlsPosition)) {
+      return last === null ? hlsPosition : clamp(hlsPosition, first, last);
+    }
+    return last === null ? null : Math.max(first, last - 0.25);
+  }
+
+  function atLivePosition(position = livePositionFor()) {
+    return position !== null && finiteOr(currentVideo.currentTime) >= position - LIVE_POSITION_TOLERANCE;
+  }
+
+  function livePositionBuffered(position = livePositionFor()) {
+    return position !== null && readRanges(currentVideo.buffered)
+      .some(({ start, end }) => position >= start && end - position >= MIN_LIVE_POSITION_FORWARD_BUFFER);
+  }
+
+  function catchUpEligible() {
+    const livePosition = livePositionFor();
+    return state.mode === 'live' && state.lowLatency && state.selectedRate === 1 && state.following
+      && currentVideo.paused === false && state.playerState !== 'waiting'
+      && livePosition !== null && livePosition - finiteOr(currentVideo.currentTime) > LIVE_POSITION_TOLERANCE
+      && state.forwardBuffer >= MIN_CATCH_UP_FORWARD_BUFFER;
   }
 
   function stopCatchUp(reason) {
@@ -308,32 +363,32 @@ export function createPlayerController({
       return;
     }
     if (state.engine === 'hls' && hls?.config) {
-      const enabled = autoCatchUpEligible();
-      hls.config.maxLiveSyncPlaybackRate = enabled ? 1.25 : 1;
+      const enabled = catchUpEligible();
+      hls.config.liveMaxLatencyDurationCount = state.following && livePositionBuffered()
+        ? latencyProfile().liveMaxLatencyDurationCount
+        : Number.POSITIVE_INFINITY;
+      hls.config.maxLiveSyncPlaybackRate = enabled ? latencyProfile().maxLiveSyncPlaybackRate : 1;
       if (!enabled) {
         try { currentVideo.playbackRate = state.selectedRate; } catch {}
-        if (state.catchUpActive) stopCatchUp(reason);
+        stopCatchUp(reason);
       }
       return;
     }
-    if (!autoCatchUpEligible()) stopCatchUp(reason);
+    if (!catchUpEligible()) stopCatchUp(reason);
   }
 
   function nativeCatchUpTick() {
     updateLiveMetrics();
-    if (state.engine !== 'native' || !autoCatchUpEligible()) {
+    if (state.mode === 'live' && state.following && currentVideo.paused === false && livePositionBuffered()
+      && state.latency !== null
+      && state.latency > NATIVE_MAX_LATENCY_SECONDS[state.lowLatency ? 'low' : 'stable']) {
+      goLive({ requireBuffered: true });
+      return;
+    }
+    if (state.engine !== 'native' || !catchUpEligible()) {
       applyRatePolicy('not-eligible');
       emitSnapshot();
       return;
-    }
-    if (state.targetLatency === null && state.latency !== null && state.forwardBuffer > 1) {
-      latencySamples.push(state.latency);
-      latencySamples = latencySamples.slice(-5);
-      if (latencySamples.length === 5 && Math.max(...latencySamples) - Math.min(...latencySamples) <= 1) {
-        const sorted = [...latencySamples].sort((a, b) => a - b);
-        state.targetLatency = clamp(sorted[2], 1, 10);
-        pushDebug('player', 'info', 'TARGET_LATENCY_ESTABLISHED', { samples: latencySamples, target: state.targetLatency });
-      }
     }
     if (state.targetLatency === null || state.latency === null) {
       emitSnapshot();
@@ -354,8 +409,25 @@ export function createPlayerController({
   function liveTick() {
     if (state.engine === 'native') return nativeCatchUpTick();
     updateLiveMetrics();
+    const maximumLatency = Number.isFinite(Number(hls?.maxLatency))
+      ? Number(hls.maxLatency)
+      : state.targetLatency === null
+        ? null
+        : state.targetLatency * (latencyProfile().liveMaxLatencyDurationCount / latencyProfile().liveSyncDurationCount);
+    if (state.following && currentVideo.paused === false && livePositionBuffered()
+      && state.latency !== null && maximumLatency !== null
+      && state.latency > maximumLatency) {
+      goLive({ requireBuffered: true });
+      return;
+    }
+    const catchUpReason = atLivePosition()
+      ? 'live-edge'
+      : state.forwardBuffer < MIN_CATCH_UP_FORWARD_BUFFER
+        ? 'forward-buffer-low'
+        : 'live-tick';
+    applyRatePolicy(catchUpReason);
     const effective = finiteOr(currentVideo.playbackRate, 1);
-    const active = autoCatchUpEligible() && effective > 1.001;
+    const active = catchUpEligible() && effective > 1.001;
     if (active !== state.catchUpActive) {
       state.catchUpActive = active;
       state.catchUpReason = active ? 'hls-latency-controller' : 'hls-rate-normal';
@@ -366,12 +438,12 @@ export function createPlayerController({
 
   function updateFollowingAfterSeek() {
     if (state.mode !== 'live') return;
-    const end = latestRangeEnd(readRanges(currentVideo.buffered));
-    const next = end !== null && end - finiteOr(currentVideo.currentTime) <= 2;
+    const position = livePositionFor();
+    const next = atLivePosition(position);
     if (next !== state.following) {
       state.following = next;
       state.catchUpReason = next ? 'seek-near-live-edge' : 'dvr-seek';
-      pushDebug('player', 'info', 'FOLLOWING_CHANGED', { following: next, reason: state.catchUpReason });
+      pushDebug('player', 'info', 'FOLLOWING_CHANGED', { following: next, livePosition: position, reason: state.catchUpReason });
     }
     applyRatePolicy(state.catchUpReason);
   }
@@ -388,7 +460,6 @@ export function createPlayerController({
 
   function resetCatchUp() {
     clearLiveTimer();
-    latencySamples = [];
     state.targetLatency = null;
     state.latency = null;
     state.forwardBuffer = 0;
@@ -401,8 +472,11 @@ export function createPlayerController({
     const seekable = readRanges(currentVideo.seekable);
     const timelineStart = seekable.length ? seekable[0].start : 0;
     const duration = Number(currentVideo.duration);
-    const timelineEnd = seekable.length
-      ? seekable[seekable.length - 1].end
+    const livePosition = livePositionFor(seekable);
+    const timelineEnd = state.mode === 'live' && livePosition !== null
+      ? livePosition
+      : seekable.length
+        ? seekable[seekable.length - 1].end
       : Number.isFinite(duration) ? Math.max(0, duration) : 0;
     const volume = effectiveVolume();
     return {
@@ -424,10 +498,12 @@ export function createPlayerController({
       seekable,
       timelineStart,
       timelineEnd,
-      canSeek: timelineEnd > timelineStart,
+      canSeek: timelineEnd > timelineStart && (state.mode !== 'live' || seekable.length > 0),
+      livePosition,
+      atLiveEdge: atLivePosition(livePosition),
+      lowLatency: state.lowLatency,
       selectedRate: state.selectedRate,
       effectiveRate: finiteOr(currentVideo.playbackRate, 1),
-      autoCatchUp: state.autoCatchUp,
       following: state.following,
       catchUpActive: state.catchUpActive,
       catchUpReason: state.catchUpReason,
@@ -479,6 +555,11 @@ export function createPlayerController({
 
   async function userActivatedPlay({ unmute = false, reason = 'manual-play' } = {}) {
     state.notice = '';
+    state.userPaused = false;
+    if (state.mode === 'live' && currentVideo.paused !== false) {
+      state.playerState = 'loading';
+      emitSnapshot();
+    }
     const generation = sourceGeneration;
     const audioPromise = startActivation();
     const playPromise = requestVideoPlay();
@@ -511,7 +592,9 @@ export function createPlayerController({
     const error = playResult.reason;
     state.lastPlayResult = { ok: false, name: error?.name || 'Error', message: error?.message || String(error), reason };
     state.lastError = state.lastPlayResult;
-    state.playerState = error?.name === 'NotAllowedError' ? 'ready' : 'error';
+    state.playerState = error?.name === 'NotAllowedError'
+      ? 'ready'
+      : error?.name === 'NotSupportedError' ? 'unsupported' : 'error';
     pushDebug('player', 'error', 'PLAY_FAILED', state.lastPlayResult);
     emitSnapshot();
     return false;
@@ -522,6 +605,7 @@ export function createPlayerController({
     autoplayAttempted = true;
     const generation = sourceGeneration;
     setVideoMuted(true, 'autoplay');
+    state.playerState = 'loading';
     state.autoplayState = 'attempting-muted';
     state.lastPlayResult = null;
     pushDebug('autoplay', 'info', 'AUTOPLAY_ATTEMPT', { muted: true });
@@ -546,7 +630,9 @@ export function createPlayerController({
         pushDebug('autoplay', 'warn', 'AUTOPLAY_BLOCKED', state.lastPlayResult);
       } else {
         state.autoplayState = 'idle';
-        state.playerState = state.mode === 'live' ? 'offline' : 'error';
+        state.playerState = error?.name === 'NotSupportedError'
+          ? 'unsupported'
+          : state.mode === 'live' ? 'offline' : 'error';
         state.lastError = state.lastPlayResult;
         pushDebug('autoplay', 'error', 'AUTOPLAY_FAILED', state.lastPlayResult);
       }
@@ -602,29 +688,68 @@ export function createPlayerController({
     if (type === 'loadedmetadata') {
       state.playerState = 'ready';
       if (state.mode === 'record') seekPendingTimecode();
-      else if (state.engine === 'native') attemptMutedAutoplay();
+      else if (state.engine === 'native') {
+        goLive();
+        attemptMutedAutoplay();
+      }
     } else if (type === 'playing') {
       state.playerState = 'playing';
       state.userPaused = false;
       state.hasPlayed = true;
+      mediaRecoveryAttempted = false;
       applyRatePolicy('playing');
     } else if (type === 'pause') {
-      if (!suppressPauseEvent && documentImpl?.pictureInPictureElement === currentVideo && state.playerState !== 'idle') state.userPaused = true;
-      if (state.playerState !== 'idle' && !currentVideo.ended) state.playerState = 'paused';
-      applyRatePolicy('paused');
+      const terminal = ['offline', 'error', 'unsupported'].includes(state.playerState);
+      if (!terminal) {
+        if (!suppressPauseEvent && documentImpl?.pictureInPictureElement === currentVideo && state.playerState !== 'idle') state.userPaused = true;
+        const buffering = state.mode === 'live' && !state.userPaused
+          && documentImpl?.visibilityState !== 'hidden' && state.playerState !== 'idle';
+        if (buffering) state.playerState = 'waiting';
+        else if (state.playerState !== 'idle' && !currentVideo.ended) state.playerState = 'paused';
+        applyRatePolicy(buffering ? 'buffering-pause' : 'paused');
+      }
     } else if (type === 'waiting' || type === 'stalled') {
-      state.playerState = 'waiting';
+      if (!['offline', 'error', 'unsupported'].includes(state.playerState)) {
+        state.playerState = state.userPaused ? 'paused' : 'waiting';
+      }
       stopCatchUp(type);
-    } else if (type === 'canplay') {
-      if (currentVideo.paused && state.playerState === 'waiting') state.playerState = 'ready';
+    } else if (type === 'canplay' || type === 'progress' || type === 'durationchange') {
+      if (state.playerState === 'waiting' && state.mode === 'live' && !state.userPaused) {
+        if (currentVideo.paused === false) {
+          state.playerState = 'playing';
+          applyRatePolicy('buffer-resumed');
+        } else {
+          state.playerState = 'loading';
+          if (livePositionBuffered()) goLive({ requireBuffered: true });
+          const generation = sourceGeneration;
+          requestVideoPlay().then(() => {
+            if (generation !== sourceGeneration || destroyed) return;
+            state.playerState = 'playing';
+            state.hasPlayed = true;
+            state.lastPlayResult = { ok: true, reason: 'buffer-resume' };
+            applyRatePolicy('buffer-resumed');
+            emitSnapshot();
+          }).catch((error) => {
+            if (generation !== sourceGeneration || destroyed) return;
+            state.playerState = 'waiting';
+            state.lastPlayResult = { ok: false, name: error?.name || 'Error', message: error?.message || String(error), reason: 'buffer-resume' };
+            pushDebug('autoplay', 'warn', 'BUFFER_RESUME_FAILED', state.lastPlayResult);
+            emitSnapshot();
+          });
+        }
+      } else if (state.playerState === 'waiting') state.playerState = currentVideo.paused ? 'ready' : 'playing';
     } else if (type === 'ended') {
-      state.playerState = 'paused';
-      state.userPaused = false;
+      if (!['offline', 'error', 'unsupported'].includes(state.playerState)) {
+        state.playerState = state.mode === 'live' && !state.userPaused ? 'waiting' : 'paused';
+        state.userPaused = false;
+      }
       stopCatchUp('ended');
     } else if (type === 'error') {
       if (handleNativeCorsFailure()) return;
       state.lastError = serializePayload(currentVideo.error || { message: 'Media element error' });
-      state.playerState = state.mode === 'live' ? 'offline' : 'error';
+      state.playerState = Number(currentVideo.error?.code) === 4
+        ? 'unsupported'
+        : state.mode === 'live' ? 'offline' : 'error';
     } else if (type === 'ratechange') {
       const effective = finiteOr(currentVideo.playbackRate, 1);
       const wasActive = state.catchUpActive;
@@ -718,25 +843,69 @@ export function createPlayerController({
   }
 
   function bindHlsEvents(Hls, generation) {
-    [...new Set(Object.values(Hls.Events || {}))].forEach((eventName) => {
+    const observedEvents = [Hls.Events?.MANIFEST_PARSED, Hls.Events?.BUFFER_APPENDED, Hls.Events?.ERROR].filter(Boolean);
+    [...new Set(observedEvents)].forEach((eventName) => {
       hls.on(eventName, (_event, data) => {
         if (generation !== sourceGeneration) return;
-        pushDebug('hls', data?.fatal ? 'error' : 'debug', eventName, data);
+        const debugPayload = eventName === Hls.Events.MANIFEST_PARSED
+          ? {
+              levels: data?.levels?.length ?? 0,
+              firstLevel: data?.firstLevel,
+              audio: data?.audio,
+              video: data?.video,
+            }
+          : {
+              fatal: Boolean(data?.fatal),
+              type: data?.type,
+              details: data?.details,
+              error: data?.error,
+              reason: data?.reason,
+              response: data?.response && {
+                code: data.response.code,
+                text: data.response.text,
+                url: data.response.url,
+              },
+              fragment: data?.frag && {
+                sn: data.frag.sn,
+                start: data.frag.start,
+                duration: data.frag.duration,
+                url: data.frag.url,
+              },
+            };
+        if (eventName !== Hls.Events.BUFFER_APPENDED) {
+          pushDebug('hls', data?.fatal ? 'error' : 'debug', eventName, debugPayload);
+        }
         if (eventName === Hls.Events.MANIFEST_PARSED) {
           state.playerState = 'ready';
           setBoostCapability(true);
           attemptMutedAutoplay();
         }
+        if (eventName === Hls.Events.BUFFER_APPENDED && state.playerState === 'waiting') {
+          handleMediaEvent('progress', data);
+        }
         if (eventName === Hls.Events.ERROR && data?.fatal) {
-          if (data.type === Hls.ErrorTypes?.MEDIA_ERROR && !mediaRecoveryAttempted) {
+          const unsupportedCodec = data.details === Hls.ErrorDetails?.BUFFER_ADD_CODEC_ERROR
+            || data.details === 'bufferAddCodecError'
+            || data.error?.name === 'NotSupportedError';
+          if (data.type === Hls.ErrorTypes?.MEDIA_ERROR && !unsupportedCodec && !mediaRecoveryAttempted) {
             mediaRecoveryAttempted = true;
-            pushDebug('hls', 'warn', 'HLS_MEDIA_RECOVERY', data);
+            state.playerState = 'waiting';
+            pushDebug('hls', 'warn', 'HLS_MEDIA_RECOVERY', debugPayload);
             hls?.recoverMediaError?.();
+            emitSnapshot();
           } else {
-            state.lastError = serializePayload(data);
-            state.playerState = data.type === Hls.ErrorTypes?.NETWORK_ERROR ? 'offline' : 'error';
-            hls?.destroy?.();
+            const failedHls = hls;
+            state.lastError = serializePayload(debugPayload);
+            state.playerState = unsupportedCodec
+              ? 'unsupported'
+              : data.type === Hls.ErrorTypes?.NETWORK_ERROR ? 'offline' : 'error';
+            state.engine = unsupportedCodec ? 'unsupported' : 'none';
+            state.wasPlayingBeforeHidden = false;
+            sourceGeneration += 1;
+            clearLiveTimer();
+            stopCatchUp('hls-fatal');
             hls = null;
+            failedHls?.destroy?.();
             emitSnapshot();
           }
         }
@@ -747,8 +916,27 @@ export function createPlayerController({
   async function loadLive(streamer, options = {}) {
     const url = liveUrl(streamer);
     const generation = initializeSource('live', streamer, url, { preserveMute: Boolean(options.preserveMute) });
-    if (currentVideo.canPlayType?.('application/vnd.apple.mpegurl')) {
-      const configured = await configureNativeSource(url, generation, sourceGeneration);
+    const nativeSupported = Boolean(currentVideo.canPlayType?.('application/vnd.apple.mpegurl'));
+    const Hls = getHls?.();
+    if (Hls?.isSupported?.()) {
+      state.engine = 'hls';
+      setBoostCapability(true);
+      hls = new Hls({
+        enableWorker: true,
+        startPosition: -1,
+        liveSyncMode: 'buffered',
+        ...latencyProfile(),
+      });
+      bindHlsEvents(Hls, generation);
+      hls.attachMedia(currentVideo);
+      hls.loadSource(url);
+      startLiveTimer();
+      pushDebug('player', 'info', 'ENGINE_SELECTED', { engine: 'hls' });
+      emitSnapshot();
+      return 'hls';
+    }
+    if (nativeSupported) {
+      const configured = await configureNativeSource(url, generation);
       if (!configured || generation !== sourceGeneration) return 'cancelled';
       state.engine = 'native';
       currentVideo.src = url;
@@ -759,31 +947,18 @@ export function createPlayerController({
       return 'native';
     }
 
-    const Hls = getHls?.();
-    if (!Hls?.isSupported?.()) {
-      state.playerState = 'unsupported';
-      state.engine = 'unsupported';
-      pushDebug('player', 'error', 'ENGINE_UNSUPPORTED', { mode: 'live' });
-      emitSnapshot();
-      return 'unsupported';
-    }
-    state.engine = 'hls';
-    setBoostCapability(true);
-    hls = new Hls({ enableWorker: true, lowLatencyMode: true, maxLiveSyncPlaybackRate: 1.25 });
-    bindHlsEvents(Hls, generation);
-    hls.attachMedia(currentVideo);
-    hls.loadSource(url);
-    startLiveTimer();
-    pushDebug('player', 'info', 'ENGINE_SELECTED', { engine: 'hls' });
+    state.playerState = 'unsupported';
+    state.engine = 'unsupported';
+    pushDebug('player', 'error', 'ENGINE_UNSUPPORTED', { mode: 'live' });
     emitSnapshot();
-    return 'hls';
+    return 'unsupported';
   }
 
   async function loadRecord(record, { timecode = null } = {}) {
     const url = recordUrl(record.filename);
     const generation = initializeSource('record', record.filename, url, { preserveMute: true });
     pendingTimecode = parseTimecode(timecode);
-    const configured = await configureNativeSource(url, generation, sourceGeneration);
+    const configured = await configureNativeSource(url, generation);
     if (!configured || generation !== sourceGeneration) return 'cancelled';
     state.engine = 'native';
     currentVideo.src = url;
@@ -819,7 +994,9 @@ export function createPlayerController({
     const seekable = readRanges(currentVideo.seekable);
     const duration = Number(currentVideo.duration);
     let target = Number(seconds);
-    if (state.mode === 'live' && seekable.length) target = clamp(target, seekable[0].start, seekable[seekable.length - 1].end);
+    if (state.mode === 'live' && seekable.length) {
+      target = clamp(target, seekable[0].start, livePositionFor(seekable) ?? seekable[seekable.length - 1].end);
+    }
     else if (Number.isFinite(duration)) target = clamp(target, 0, duration);
     try { currentVideo.currentTime = target; } catch (error) {
       pushDebug('player', 'error', 'SEEK_FAILED', { target, error });
@@ -831,15 +1008,22 @@ export function createPlayerController({
     return true;
   }
 
-  function goLive() {
-    const end = latestRangeEnd(readRanges(currentVideo.buffered));
-    if (end === null) return false;
-    const target = Math.max(0, end - 0.25);
+  function goLive({ requireBuffered = false } = {}) {
+    const target = livePositionFor();
+    if (target === null) return false;
+    state.following = true;
+    if (requireBuffered && !livePositionBuffered(target)) {
+      state.catchUpReason = 'live-position-unbuffered';
+      applyRatePolicy(state.catchUpReason);
+      pushDebug('player', 'info', 'GO_LIVE_DEFERRED', { target, engine: state.engine });
+      emitSnapshot();
+      return false;
+    }
     const result = seek(target);
     if (result) {
       state.following = true;
       state.catchUpReason = 'go-live';
-      pushDebug('player', 'info', 'GO_LIVE', { target, bufferedEnd: end });
+      pushDebug('player', 'info', 'GO_LIVE', { target, engine: state.engine });
       applyRatePolicy('go-live');
       emitSnapshot();
     }
@@ -920,12 +1104,18 @@ export function createPlayerController({
     }
   }
 
-  function setAutoCatchUp(enabled) {
-    state.autoCatchUp = Boolean(enabled);
-    writePreference(storage, STORAGE_KEYS.autoCatchUp, state.autoCatchUp);
-    applyRatePolicy(state.autoCatchUp ? 'auto-catch-up-enabled' : 'auto-catch-up-disabled');
-    pushDebug('player', 'info', 'AUTO_CATCH_UP_CHANGED', { enabled: state.autoCatchUp });
+  function setLowLatency(enabled) {
+    state.lowLatency = Boolean(enabled);
+    writePreference(storage, STORAGE_KEYS.lowLatency, state.lowLatency);
+    if (hls?.config) {
+      Object.assign(hls.config, latencyProfile());
+      try { hls.lowLatencyMode = state.lowLatency; } catch { /* Runtime switching is optional. */ }
+    }
+    if (state.mode === 'live' && state.lowLatency) goLive();
+    else applyRatePolicy(state.lowLatency ? 'low-latency-enabled' : 'low-latency-disabled');
+    pushDebug('player', 'info', 'LOW_LATENCY_CHANGED', { enabled: state.lowLatency, profile: latencyProfile() });
     emitSnapshot();
+    return true;
   }
 
   async function share({ includeTime = false } = {}) {
@@ -1103,7 +1293,7 @@ export function createPlayerController({
 
   return Object.freeze({
     loadLive, loadRecord, retry, play, pause, seek, goLive, setMuted, setVolume, setBoost,
-    setPlaybackRate, setAutoCatchUp, share, togglePictureInPicture, toggleFullscreen,
+    setPlaybackRate, setLowLatency, share, togglePictureInPicture, toggleFullscreen,
     getDebugEntries, clearDebug, exportDebug, cleanup, destroy,
   });
 }

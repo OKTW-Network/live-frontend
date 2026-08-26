@@ -4,6 +4,7 @@ import {
   deriveStreamers,
   filterRecords,
   isDateRangeInverted,
+  liveThumbnailUrl,
   normalizeRecords,
   parseRoute,
   probeLive,
@@ -76,4 +77,9 @@ test('treats failed or invalid live probes as offline', async () => {
   assert.equal(await probeLive('test', { fetchImpl: async () => { throw new Error('offline'); }, timeoutMs: 10 }), false);
   assert.equal(await probeLive('test', { fetchImpl: async () => ({ ok: true, text: async () => '#EXTM3U\n' }), timeoutMs: 10 }), true);
   assert.equal(await probeLive('test', { fetchImpl: async () => ({ ok: true, text: async () => 'not hls' }), timeoutMs: 10 }), false);
+});
+
+test('builds a cache-busted live thumbnail URL independently from record thumbnails', () => {
+  assert.equal(liveThumbnailUrl('cute panda'), 'https://live.oktw.one/live/cute%20panda.png');
+  assert.equal(liveThumbnailUrl('cute panda', 123), 'https://live.oktw.one/live/cute%20panda.png?v=123');
 });
