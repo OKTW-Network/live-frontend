@@ -18,6 +18,15 @@ npm run build    # static assets in dist/
 npm run preview  # preview the production build
 ```
 
+### Local reverse proxy (Docker)
+
+```bash
+VITE_HMR_CLIENT_PORT=8080 npm run dev -- --host 0.0.0.0 --port 5173
+docker compose -f docker-compose.dev.yml up
+```
+
+Open `http://127.0.0.1:8080/` (or your LAN IP on port 8080). Nginx proxies SPA/HMR to Vite, `/live` `/ws` and non-video `/record` to `live.oktw.one`, and `/record/*.mp4` straight to S3 (`s3.licson.net/oktw-live/…`) so the browser never sees the upstream 302 and stays same-origin.
+
 ## Routes
 
 | Path | Who serves it |
