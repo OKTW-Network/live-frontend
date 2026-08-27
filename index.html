@@ -128,7 +128,7 @@
         </div>
 
         <section x-show="!loading && (view === 'channel' || view === 'record')" x-cloak class="w-full px-4 pb-7 sm:px-6 sm:pb-10 lg:px-8">
-          <div x-show="view === 'record' || (view === 'channel' && currentStreamer && liveStatuses[currentStreamer.name] === 'online')" class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <div x-show="view === 'record' || (view === 'channel' && currentStreamer && (liveStatuses[currentStreamer.name] === 'online' || activeMediaKey === 'live:' + currentStreamer.name))" class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
             <div class="min-w-0">
               <div x-ref="playerContainer" @keydown.window="handlePlayerShortcut" @keydown.escape.window="closePlayerPopovers" class="player-stage overflow-hidden rounded-xl bg-black shadow-2xl shadow-black/15">
                 <div x-ref="playerShell" @pointerdown="handlePlayerPointerDown" @pointermove="handlePlayerPointerMove" @pointerup="handlePlayerPointerUp" @pointercancel="handlePlayerPointerCancel" class="player-shell relative aspect-video overflow-hidden bg-black">
@@ -141,7 +141,7 @@
                 <button x-show="playerSnapshot.autoplayState === 'blocked'" type="button" @click="togglePlayback({ showFeedback: true, forcePlay: true })" class="player-overlay-action absolute left-1/2 top-1/2 z-30 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white text-black shadow-xl" aria-label="開始播放直播">
                   <svg data-heroicon="play" class="size-9" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
                 </button>
-                <button x-show="['offline', 'error'].includes(playerSnapshot.playerState)" type="button" @click="retryPlayer" class="player-overlay-action absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white px-5 py-3 text-sm font-black text-black">重新嘗試</button>
+                <button x-show="['offline', 'error', 'ended'].includes(playerSnapshot.playerState)" type="button" @click="retryPlayer" class="player-overlay-action absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white px-5 py-3 text-sm font-black text-black">重新嘗試</button>
 
                 <template x-for="feedback in playerGestureFeedback ? [playerGestureFeedback] : []" :key="feedback.id">
                   <div :class="feedback.type === 'playback' ? 'player-gesture-feedback-center' : (feedback.direction === 'left' ? 'player-gesture-feedback-left' : 'player-gesture-feedback-right')" class="player-gesture-feedback" role="status" aria-live="polite" aria-atomic="true">

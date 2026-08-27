@@ -231,14 +231,18 @@ export function nextThumbnailExtension(extension) {
   return { jxl: 'avif', avif: 'png', png: null }[extension] ?? null;
 }
 
-export async function probeLive(streamer, { timeoutMs = 5000 } = {}) {
+export async function probeLive(streamer, { timeoutMs = 5000, fetch: fetchImpl = globalThis.fetch } = {}) {
   try {
-    const response = await fetch(liveUrl(streamer), {
+    const response = await fetchImpl(liveUrl(streamer), {
       cache: 'no-store',
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return false;
-    return (await response.text()).trimStart().startsWith('#EXTM3U');
+    const body = (await response.text()).trimStart();
+    if (!body.startsWith('#EXTM3U')) return false;
+    // Retained playlists after a broadcast often keep #EXTM3U but add ENDLIST while converting.
+    if (/(?:^|\n)\s*#EXT-X-ENDLIST\b/m.test(body)) return false;
+    return true;
   } catch {
     return false;
   }

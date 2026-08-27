@@ -36,7 +36,10 @@ export function createPlayerComponent(Alpine) {
         container: this.$refs.playerContainer,
         getHls: () => window.Hls,
         storage: localStorage,
-        onSnapshot: (snapshot) => { this.playerSnapshot = snapshot; },
+        onSnapshot: (snapshot) => {
+          this.playerSnapshot = snapshot;
+          this.syncLiveStatusFromPlayer?.(snapshot);
+        },
         onDebug: ({ count }) => {
           this.debugCount = count;
           if (this.debugOpen) this.refreshDebug();

@@ -367,11 +367,21 @@ export function registerApp(Alpine) {
       }
       if (online && this.activeMediaKey === `live:${name}`) {
         const playerState = this.playerSnapshot.playerState;
-        if (playerState === 'offline' || playerState === 'error') await this.player.retry();
+        if (['offline', 'error', 'ended'].includes(playerState)) await this.player.retry();
       } else if (online) await this.activateMedia('live', name, name, this.routeRun);
-      else if (this.activeMediaKey === `live:${name}`) this.deactivateMedia();
+      // Keep an already-mounted live player when the playlist is gone or ENDLIST-only
+      // (conversion window); the player surfaces ended/offline instead of unmounting.
       if (run === this.probeRun && this.view === 'channel' && this.currentStreamer?.name === name) {
         this.probeTimer = setTimeout(() => this.startChannelProbes(name), 60000);
+      }
+    },
+
+    syncLiveStatusFromPlayer(snapshot) {
+      if (snapshot?.mode !== 'live' || !snapshot.source) return;
+      if (!['ended', 'offline'].includes(snapshot.playerState)) return;
+      const name = snapshot.source;
+      if (this.liveStatuses[name] === 'online') {
+        this.liveStatuses = { ...this.liveStatuses, [name]: 'offline' };
       }
     },
 

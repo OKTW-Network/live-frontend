@@ -60,11 +60,12 @@ export function defaultMessage(state) {
     loading: '正在連線影音來源…',
     waiting: state.mode === 'live' ? '正在等待直播內容…' : '正在載入影片內容…',
     ready: '已就緒，按下播放即可開始。',
+    ended: '直播已結束。',
     offline: '目前沒有直播，或串流無法取得。',
     unsupported: '這個瀏覽器不支援此影音格式。',
     error: state.mode === 'record' ? '瀏覽器無法播放這份直播紀錄。' : '影音播放發生錯誤。',
   }[state.playerState];
-  if (['loading', 'waiting', 'offline', 'unsupported', 'error'].includes(state.playerState)) return statusMessage;
+  if (['loading', 'waiting', 'ended', 'offline', 'unsupported', 'error'].includes(state.playerState)) return statusMessage;
   if (state.autoplayState === 'blocked') return '瀏覽器已阻擋自動播放，請按下播放。';
   if (state.autoplayState === 'playing-muted') return '直播已靜音／開啟聲音';
   return statusMessage || '';

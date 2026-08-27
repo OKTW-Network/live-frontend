@@ -89,6 +89,15 @@ test('treats failed or invalid live probes as offline', async (t) => {
 
   globalThis.fetch = async () => ({ ok: true, text: async () => 'not hls' });
   assert.equal(await probeLive('test', { timeoutMs: 10 }), false);
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    text: async () => '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg.ts\n#EXT-X-ENDLIST\n',
+  });
+  assert.equal(await probeLive('test', { timeoutMs: 10 }), false);
+
+  globalThis.fetch = async () => ({ ok: false, text: async () => '404' });
+  assert.equal(await probeLive('test', { timeoutMs: 10 }), false);
 });
 
 test('recordUrl maps .flv filenames to .mp4 and leaves other extensions unchanged', () => {
