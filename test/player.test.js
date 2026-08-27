@@ -153,7 +153,6 @@ class FakeHls {
     BUFFER_APPENDED: 'buffer-appended',
     ERROR: 'error',
     LEVEL_LOADED: 'level-loaded',
-    LEVEL_UPDATED: 'level-updated',
     MEDIA_ENDED: 'media-ended',
   };
   static ErrorTypes = { NETWORK_ERROR: 'network', MEDIA_ERROR: 'media' };
@@ -197,8 +196,6 @@ function createHarness({
   AudioContext = FakeAudioContext,
   href = 'http://localhost/watch',
   navigator = {},
-  liveStallBudgetMs,
-  now = Date.now,
 } = {}) {
   const video = new FakeVideo({ nativeHls });
   const container = new FakeContainer(video);
@@ -223,8 +220,6 @@ function createHarness({
       },
       setInterval: (callback) => { timer.callback = callback; return 1; },
       clearInterval: () => { timer.cleared = true; timer.callback = null; },
-      now,
-      ...(liveStallBudgetMs !== undefined ? { liveStallBudgetMs } : {}),
     },
     onSnapshot: (snapshot) => snapshots.push(snapshot),
   });
@@ -254,7 +249,7 @@ test('live HLS is muted before attachment and autoplay state follows the play pr
   assert.equal(hls.config.liveSyncMode, 'buffered');
   assert.deepEqual(
     [...hls.handlers.keys()].sort(),
-    ['buffer-appended', 'error', 'level-updated', 'manifest', 'media-ended'],
+    ['buffer-appended', 'error', 'manifest', 'media-ended'],
   );
   assert.equal(video.playCalls, 0);
 
@@ -638,7 +633,7 @@ test('automatic native correction does not seek into an unbuffered live segment'
   await harness.controller.destroy();
 });
 
-test('a live stream with no playable content waits and resumes instead of becoming paused', async () => {
+test('a paused live stream with no playable content waits and resumes', async () => {
   const harness = createHarness({ nativeHls: true, hlsSupported: false });
   harness.video.seekable = new FakeTimeRanges([[0, 10]]);
   harness.video.buffered = new FakeTimeRanges([[0, 10]]);
@@ -651,15 +646,7 @@ test('a live stream with no playable content waits and resumes instead of becomi
   harness.video.emit('pause');
   assert.equal(harness.snapshot.playerState, 'waiting');
 
-  harness.video.ended = true;
-  harness.video.emit('ended');
-  assert.equal(harness.snapshot.playerState, 'waiting');
-  assert.equal(harness.snapshot.userPaused, false);
-  assert.equal(harness.snapshot.following, true);
-  assert.match(harness.snapshot.message, /等待直播內容/);
-
   const playCalls = harness.video.playCalls;
-  harness.video.ended = false;
   harness.video.emit('canplay');
   await flush();
   assert.equal(harness.video.playCalls, playCalls + 1);
@@ -727,10 +714,8 @@ test('HLS buffer append resumes a live stream waiting for new content', async ()
   await flush();
 
   harness.video.paused = true;
-  harness.video.ended = true;
-  harness.video.emit('ended');
+  harness.video.emit('waiting');
   const playCalls = harness.video.playCalls;
-  harness.video.ended = false;
   hls.emit(FakeHls.Events.BUFFER_APPENDED);
   await flush();
 
@@ -823,57 +808,6 @@ test('cleanup keeps AudioContext reusable while destroy closes it and removes ti
   assert.equal(context.state, 'closed');
 });
 
-test('HLS live-to-VOD ENDLIST finishes as ended instead of waiting forever', async () => {
-  const harness = createHarness();
-  harness.video.seekable = new FakeTimeRanges([[0, 12]]);
-  harness.video.buffered = new FakeTimeRanges([[0, 12]]);
-  harness.video.currentTime = 11.9;
-  await harness.controller.loadLive('panda');
-  const hls = FakeHls.instances[0];
-  hls.liveSyncPosition = 10;
-  hls.emit(FakeHls.Events.MANIFEST_PARSED);
-  await flush();
-  harness.video.paused = false;
-  harness.video.emit('playing');
-  assert.equal(harness.snapshot.hasPlayed, true);
-
-  hls.emit(FakeHls.Events.LEVEL_UPDATED, {
-    details: { live: false, endList: true, targetduration: 2, totalduration: 12 },
-  });
-  assert.equal(harness.snapshot.playerState, 'ended');
-  assert.match(harness.snapshot.message, /直播已結束/);
-  assert.equal(harness.snapshot.following, false);
-  assert.equal(hls.destroyed, false);
-
-  await harness.controller.destroy();
-});
-
-test('HLS ENDLIST with remaining buffer waits for media ended before ending', async () => {
-  const harness = createHarness();
-  harness.video.seekable = new FakeTimeRanges([[0, 20]]);
-  harness.video.buffered = new FakeTimeRanges([[0, 20]]);
-  harness.video.currentTime = 5;
-  await harness.controller.loadLive('panda');
-  const hls = FakeHls.instances[0];
-  hls.liveSyncPosition = 18;
-  hls.emit(FakeHls.Events.MANIFEST_PARSED);
-  await flush();
-  harness.video.paused = false;
-  harness.video.emit('playing');
-
-  hls.emit(FakeHls.Events.LEVEL_UPDATED, {
-    details: { live: false, endList: true, targetduration: 2, totalduration: 20 },
-  });
-  assert.notEqual(harness.snapshot.playerState, 'ended');
-  assert.notEqual(harness.snapshot.playerState, 'waiting');
-
-  harness.video.ended = true;
-  harness.video.emit('ended');
-  assert.equal(harness.snapshot.playerState, 'ended');
-  assert.match(harness.snapshot.message, /直播已結束/);
-  await harness.controller.destroy();
-});
-
 test('HLS MEDIA_ENDED marks a live session as ended', async () => {
   const harness = createHarness();
   await harness.controller.loadLive('panda');
@@ -883,38 +817,53 @@ test('HLS MEDIA_ENDED marks a live session as ended', async () => {
   harness.video.emit('playing');
   hls.emit(FakeHls.Events.MEDIA_ENDED);
   assert.equal(harness.snapshot.playerState, 'ended');
+  assert.match(harness.snapshot.message, /直播已結束/);
+  assert.equal(harness.snapshot.following, false);
+  assert.equal(hls.destroyed, false);
   await harness.controller.destroy();
 });
 
-test('live stall probe treats ENDLIST playlist as ended after wait budget', async () => {
-  const harness = createHarness({
-    liveStallBudgetMs: 0,
-    fetchResult: async (url) => {
-      if (String(url).includes('.m3u8')) {
-        return {
-          ok: true,
-          text: async () => '#EXTM3U\n#EXTINF:2,\nseg.ts\n#EXT-X-ENDLIST\n',
-        };
-      }
-      return { ok: true, body: { cancel: () => Promise.resolve() } };
-    },
-  });
-  harness.video.seekable = new FakeTimeRanges([[0, 8]]);
-  harness.video.buffered = new FakeTimeRanges([[0, 8]]);
+test('HTML media ended marks an HLS live session as ended', async () => {
+  const harness = createHarness();
   await harness.controller.loadLive('panda');
-  FakeHls.instances[0].emit(FakeHls.Events.MANIFEST_PARSED);
+  const hls = FakeHls.instances[0];
+  hls.emit(FakeHls.Events.MANIFEST_PARSED);
   await flush();
   harness.video.emit('playing');
-  harness.video.paused = true;
-  harness.video.ended = false;
-  harness.video.buffered = new FakeTimeRanges([]);
-  harness.video.emit('waiting');
-  assert.equal(harness.snapshot.playerState, 'waiting');
-
-  harness.timer.callback();
-  await flush();
+  harness.video.ended = true;
+  harness.video.emit('ended');
   assert.equal(harness.snapshot.playerState, 'ended');
   assert.match(harness.snapshot.message, /直播已結束/);
+  await harness.controller.destroy();
+});
+
+test('HTML media ended marks a native HLS live session as ended', async () => {
+  const harness = createHarness({ nativeHls: true, hlsSupported: false });
+  assert.equal(await harness.controller.loadLive('panda'), 'native');
+  harness.video.emit('loadedmetadata');
+  await flush();
+  harness.video.emit('playing');
+  harness.video.ended = true;
+  harness.video.emit('ended');
+  assert.equal(harness.snapshot.playerState, 'ended');
+  assert.match(harness.snapshot.message, /直播已結束/);
+  await harness.controller.destroy();
+});
+
+test('late media and HLS events cannot overwrite an ended state', async () => {
+  const harness = createHarness();
+  await harness.controller.loadLive('panda');
+  const hls = FakeHls.instances[0];
+  hls.emit(FakeHls.Events.MANIFEST_PARSED);
+  await flush();
+  harness.video.emit('playing');
+  hls.emit(FakeHls.Events.MEDIA_ENDED);
+
+  harness.video.emit('playing');
+  hls.emit(FakeHls.Events.ERROR, { fatal: true, type: FakeHls.ErrorTypes.NETWORK_ERROR });
+  assert.equal(harness.snapshot.playerState, 'ended');
+  assert.match(harness.snapshot.message, /直播已結束/);
+  assert.equal(hls.destroyed, false);
   await harness.controller.destroy();
 });
 

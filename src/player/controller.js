@@ -1,4 +1,4 @@
-import { liveUrl, probeLive, recordUrl } from '../utils.js';
+import { liveUrl, recordUrl } from '../utils.js';
 import { createDebugLog, serializePayload } from './debug.js';
 import {
   MEDIA_EVENTS,
@@ -35,9 +35,6 @@ const LIVE_POSITION_TOLERANCE = 1.5;
 const MIN_CATCH_UP_FORWARD_BUFFER = 2;
 const MIN_LIVE_POSITION_FORWARD_BUFFER = 0.25;
 const NATIVE_MAX_LATENCY_SECONDS = Object.freeze({ low: 12, stable: 30 });
-const LIVE_STALL_TARGET_MULTIPLIER = 3;
-const LIVE_STALL_FALLBACK_MS = 20000;
-const LIVE_STALL_PROBE_ROUNDS_BEFORE_END = 2;
 const TERMINAL_PLAYER_STATES = Object.freeze(['ended', 'offline', 'error', 'unsupported']);
 
 export const INITIAL_PLAYER_SNAPSHOT = {
@@ -74,10 +71,6 @@ export function createPlayerController({
   const AudioContextImpl = environment.AudioContext ?? globalThis.AudioContext ?? globalThis.webkitAudioContext;
   const setIntervalImpl = environment.setInterval ?? globalThis.setInterval;
   const clearIntervalImpl = environment.clearInterval ?? globalThis.clearInterval;
-  const nowImpl = environment.now ?? Date.now;
-  const liveStallBudgetMs = Number.isFinite(Number(environment.liveStallBudgetMs))
-    ? Math.max(0, Number(environment.liveStallBudgetMs))
-    : null;
 
   const storedVolume = clamp(finiteOr(readPreference(storage, STORAGE_KEYS.volume, 100), 100), 0, 200);
   const storedRate = Number(readPreference(storage, STORAGE_KEYS.rate, 1));
@@ -94,12 +87,6 @@ export function createPlayerController({
   let suppressPauseEvent = false;
   let lastSnapshot = null;
   let destroyed = false;
-  let livePlaylistActive = true;
-  let liveEndedPending = false;
-  let liveTargetDuration = null;
-  let liveWaitingSince = null;
-  let liveStallProbeRounds = 0;
-  let liveStallProbeInFlight = false;
 
   let audioContext = null;
   let audioSource = null;
@@ -354,20 +341,8 @@ export function createPlayerController({
     return TERMINAL_PLAYER_STATES.includes(playerState);
   }
 
-  function resetLiveEndTracking() {
-    livePlaylistActive = true;
-    liveEndedPending = false;
-    liveTargetDuration = null;
-    liveWaitingSince = null;
-    liveStallProbeRounds = 0;
-    liveStallProbeInFlight = false;
-  }
-
   function markLiveEnded(reason) {
     if (isTerminalPlayerState()) return false;
-    liveEndedPending = true;
-    livePlaylistActive = false;
-    liveWaitingSince = null;
     state.playerState = 'ended';
     state.following = false;
     state.userPaused = false;
@@ -377,97 +352,9 @@ export function createPlayerController({
     return true;
   }
 
-  function noteLivePlaylistEnded(reason) {
-    if (!livePlaylistActive && liveEndedPending) {
-      if (currentVideo.ended || state.forwardBuffer < MIN_LIVE_POSITION_FORWARD_BUFFER) {
-        markLiveEnded(reason);
-      }
-      return;
-    }
-    livePlaylistActive = false;
-    liveEndedPending = true;
-    state.following = false;
-    stopCatchUp(reason);
-    pushDebug('hls', 'info', 'LIVE_PLAYLIST_ENDED', { reason, forwardBuffer: state.forwardBuffer });
-    if (currentVideo.ended || state.forwardBuffer < MIN_LIVE_POSITION_FORWARD_BUFFER) {
-      markLiveEnded(reason);
-      return;
-    }
-    emitSnapshot();
-  }
-
-  function liveStallBudget() {
-    if (liveStallBudgetMs !== null) return liveStallBudgetMs;
-    if (Number.isFinite(liveTargetDuration) && liveTargetDuration > 0) {
-      return liveTargetDuration * 1000 * LIVE_STALL_TARGET_MULTIPLIER;
-    }
-    return LIVE_STALL_FALLBACK_MS;
-  }
-
-  async function resolveLiveStallFromProbe(reason) {
-    if (liveStallProbeInFlight || destroyed || state.mode !== 'live' || isTerminalPlayerState()) return;
-    const generation = sourceGeneration;
-    const source = state.source;
-    liveStallProbeInFlight = true;
-    pushDebug('player', 'info', 'LIVE_STALL_PROBE', { reason, rounds: liveStallProbeRounds });
-    let online = false;
-    try {
-      online = await probeLive(source, { timeoutMs: 5000, fetch: fetchImpl });
-    } catch {
-      online = false;
-    }
-    liveStallProbeInFlight = false;
-    if (generation !== sourceGeneration || destroyed || state.mode !== 'live' || isTerminalPlayerState()) return;
-    if (online) {
-      liveStallProbeRounds += 1;
-      liveWaitingSince = nowImpl();
-      if (liveStallProbeRounds < LIVE_STALL_PROBE_ROUNDS_BEFORE_END) {
-        emitSnapshot();
-        return;
-      }
-      if (state.hasPlayed) markLiveEnded('stall-timeout');
-      else {
-        state.playerState = 'offline';
-        stopCatchUp('stall-timeout');
-        pushDebug('player', 'warn', 'LIVE_STALL_OFFLINE', { reason: 'stall-timeout' });
-        emitSnapshot();
-      }
-      return;
-    }
-    if (state.hasPlayed) markLiveEnded(reason);
-    else {
-      state.playerState = 'offline';
-      stopCatchUp(reason);
-      pushDebug('player', 'warn', 'LIVE_STALL_OFFLINE', { reason });
-      emitSnapshot();
-    }
-  }
-
-  function maybeResolveLiveStall() {
-    if (state.mode !== 'live' || liveEndedPending || isTerminalPlayerState() || state.userPaused) {
-      liveWaitingSince = null;
-      return;
-    }
-    if (!['waiting', 'loading'].includes(state.playerState)) {
-      liveWaitingSince = null;
-      liveStallProbeRounds = 0;
-      return;
-    }
-    updateLiveMetrics();
-    if (state.forwardBuffer >= MIN_LIVE_POSITION_FORWARD_BUFFER) {
-      liveWaitingSince = null;
-      liveStallProbeRounds = 0;
-      return;
-    }
-    if (liveWaitingSince === null) liveWaitingSince = nowImpl();
-    if (nowImpl() - liveWaitingSince < liveStallBudget()) return;
-    resolveLiveStallFromProbe('stall-probe');
-  }
-
   function catchUpEligible() {
     const livePosition = livePositionFor();
-    return state.mode === 'live' && !liveEndedPending && livePlaylistActive
-      && state.lowLatency && state.selectedRate === 1 && state.following
+    return state.mode === 'live' && state.lowLatency && state.selectedRate === 1 && state.following
       && currentVideo.paused === false && state.playerState !== 'waiting'
       && livePosition !== null && livePosition - finiteOr(currentVideo.currentTime) > LIVE_POSITION_TOLERANCE
       && state.forwardBuffer >= MIN_CATCH_UP_FORWARD_BUFFER;
@@ -536,7 +423,6 @@ export function createPlayerController({
   }
 
   function liveTick() {
-    maybeResolveLiveStall();
     if (state.engine === 'native') return nativeCatchUpTick();
     updateLiveMetrics();
     const maximumLatency = Number.isFinite(Number(hls?.maxLatency))
@@ -815,6 +701,12 @@ export function createPlayerController({
       event,
     });
 
+    if (isTerminalPlayerState()
+      && !['ratechange', 'volumechange', 'enterpictureinpicture', 'leavepictureinpicture'].includes(type)) {
+      emitSnapshot();
+      return;
+    }
+
     if (type === 'loadedmetadata') {
       state.playerState = 'ready';
       if (state.mode === 'record') seekPendingTimecode();
@@ -829,21 +721,17 @@ export function createPlayerController({
       mediaRecoveryAttempted = false;
       applyRatePolicy('playing');
     } else if (type === 'pause') {
-      if (!isTerminalPlayerState()) {
-        if (!suppressPauseEvent && documentImpl?.pictureInPictureElement === currentVideo && state.playerState !== 'idle') state.userPaused = true;
-        const buffering = state.mode === 'live' && !liveEndedPending && !state.userPaused
-          && documentImpl?.visibilityState !== 'hidden' && state.playerState !== 'idle';
-        if (buffering) state.playerState = 'waiting';
-        else if (state.playerState !== 'idle' && !currentVideo.ended) state.playerState = 'paused';
-        applyRatePolicy(buffering ? 'buffering-pause' : 'paused');
-      }
+      if (!suppressPauseEvent && documentImpl?.pictureInPictureElement === currentVideo && state.playerState !== 'idle') state.userPaused = true;
+      const buffering = state.mode === 'live' && !state.userPaused
+        && documentImpl?.visibilityState !== 'hidden' && state.playerState !== 'idle';
+      if (buffering) state.playerState = 'waiting';
+      else if (state.playerState !== 'idle' && !currentVideo.ended) state.playerState = 'paused';
+      applyRatePolicy(buffering ? 'buffering-pause' : 'paused');
     } else if (type === 'waiting' || type === 'stalled') {
-      if (!isTerminalPlayerState()) {
-        state.playerState = state.userPaused ? 'paused' : 'waiting';
-      }
+      state.playerState = state.userPaused ? 'paused' : 'waiting';
       stopCatchUp(type);
     } else if (type === 'canplay' || type === 'progress' || type === 'durationchange') {
-      if (state.playerState === 'waiting' && state.mode === 'live' && !state.userPaused && !liveEndedPending) {
+      if (state.playerState === 'waiting' && state.mode === 'live' && !state.userPaused) {
         if (currentVideo.paused === false) {
           state.playerState = 'playing';
           applyRatePolicy('buffer-resumed');
@@ -868,14 +756,12 @@ export function createPlayerController({
         }
       } else if (state.playerState === 'waiting') state.playerState = currentVideo.paused ? 'ready' : 'playing';
     } else if (type === 'ended') {
-      if (!isTerminalPlayerState()) {
-        if (state.mode === 'live' && (liveEndedPending || !livePlaylistActive)) {
-          markLiveEnded('media-ended');
-          return;
-        }
-        state.playerState = state.mode === 'live' && !state.userPaused ? 'waiting' : 'paused';
-        state.userPaused = false;
+      if (state.mode === 'live') {
+        markLiveEnded('media-ended');
+        return;
       }
+      state.playerState = 'paused';
+      state.userPaused = false;
       stopCatchUp('ended');
     } else if (type === 'error') {
       if (handleNativeCorsFailure()) return;
@@ -886,7 +772,8 @@ export function createPlayerController({
     } else if (type === 'ratechange') {
       const effective = finiteOr(currentVideo.playbackRate, 1);
       const wasActive = state.catchUpActive;
-      state.catchUpActive = state.mode === 'live' && state.selectedRate === 1 && effective > 1.001;
+      state.catchUpActive = !isTerminalPlayerState()
+        && state.mode === 'live' && state.selectedRate === 1 && effective > 1.001;
       if (wasActive !== state.catchUpActive) {
         pushDebug('player', 'info', 'CATCH_UP_CHANGED', {
           active: state.catchUpActive,
@@ -923,7 +810,6 @@ export function createPlayerController({
     }
     autoplayAttempted = false;
     mediaRecoveryAttempted = false;
-    resetLiveEndTracking();
     resetCorsFallback();
     pendingTimecode = null;
     state.following = false;
@@ -979,14 +865,13 @@ export function createPlayerController({
   function bindHlsEvents(Hls, generation) {
     const observedEvents = [
       Hls.Events?.MANIFEST_PARSED,
-      Hls.Events?.LEVEL_UPDATED,
       Hls.Events?.BUFFER_APPENDED,
       Hls.Events?.MEDIA_ENDED,
       Hls.Events?.ERROR,
     ].filter(Boolean);
     [...new Set(observedEvents)].forEach((eventName) => {
       hls.on(eventName, (_event, data) => {
-        if (generation !== sourceGeneration) return;
+        if (generation !== sourceGeneration || isTerminalPlayerState()) return;
         const debugPayload = eventName === Hls.Events.MANIFEST_PARSED
           ? {
               levels: data?.levels?.length ?? 0,
@@ -994,14 +879,6 @@ export function createPlayerController({
               audio: data?.audio,
               video: data?.video,
             }
-          : eventName === Hls.Events.LEVEL_UPDATED
-            ? {
-                level: data?.level,
-                live: data?.details?.live,
-                endList: data?.details?.endList ?? data?.details?.endlist,
-                targetduration: data?.details?.targetduration,
-                totalduration: data?.details?.totalduration,
-              }
           : {
               fatal: Boolean(data?.fatal),
               type: data?.type,
@@ -1028,20 +905,10 @@ export function createPlayerController({
           setBoostCapability(true);
           attemptMutedAutoplay();
         }
-        if (eventName === Hls.Events.LEVEL_UPDATED) {
-          const details = data?.details;
-          if (Number.isFinite(Number(details?.targetduration))) {
-            liveTargetDuration = Number(details.targetduration);
-          }
-          const stillLive = details?.live !== false
-            && details?.endList !== true
-            && details?.endlist !== true;
-          if (!stillLive) noteLivePlaylistEnded('level-endlist');
-        }
         if (eventName === Hls.Events.MEDIA_ENDED) {
           if (state.mode === 'live') markLiveEnded('hls-media-ended');
         }
-        if (eventName === Hls.Events.BUFFER_APPENDED && state.playerState === 'waiting' && !liveEndedPending) {
+        if (eventName === Hls.Events.BUFFER_APPENDED && state.playerState === 'waiting') {
           handleMediaEvent('progress', data);
         }
         if (eventName === Hls.Events.ERROR && data?.fatal) {
@@ -1062,7 +929,6 @@ export function createPlayerController({
               : data.type === Hls.ErrorTypes?.NETWORK_ERROR ? 'offline' : 'error';
             state.engine = unsupportedCodec ? 'unsupported' : 'none';
             state.wasPlayingBeforeHidden = false;
-            livePlaylistActive = false;
             sourceGeneration += 1;
             clearLiveTimer();
             stopCatchUp('hls-fatal');
